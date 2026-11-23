@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "context-rot-guard"
+version = "0.1.0"
+description = "Compress long agent sessions, re-inject the original goal, and detect mechanical drift."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "context-rot-guard" }]
+keywords = ["agents", "context", "harness", "llm"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+context-rot-guard = "context_rot_guard.cli:main"
+
+[project.urls]
+Documentation = "https://github.com/local/context-rot-guard"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

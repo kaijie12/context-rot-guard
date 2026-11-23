@@ -1,0 +1,25 @@
+{
+  "$comment": "Rename to settings.json in a Claude Code project. Deny is deterministic; Stop hook closes the verify loop. Adapted from sample-harness-project; the oracle is pytest.",
+  "permissions": {
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(secrets/**)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(rm -rf /*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -m pytest -q 1>&2 || exit 2"
+          }
+        ]
+      }
+    ]
+  }
+}

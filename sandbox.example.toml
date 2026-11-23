@@ -1,0 +1,19 @@
+# Example Codex-style sandbox / approval policy (illustrative).
+# Adapted from agent-sdlc/sample-harness-project.
+# Copy ideas into ~/.codex/config.toml or project agent config — names vary by CLI version.
+# sandbox = what the agent can do; approvals = when to ask a human.
+
+# Least privilege while exploring / planning
+sandbox_mode = "workspace-write"
+# Alternatives: "read-only" (plan/review agents), "danger-full-access" (avoid)
+
+# Ask when leaving the sandbox or hitting network-ish actions
+approval_policy = "on-request"
+
+[budget]
+# Soft policy mirrored in AGENTS.md — enforce in the harness where the runtime allows
+max_wall_minutes = 15
+max_consecutive_identical_failures = 3
+
+# Review / verifier agents should use read-only:
+# sandbox_mode = "read-only"

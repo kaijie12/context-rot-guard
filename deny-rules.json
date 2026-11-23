@@ -1,0 +1,35 @@
+{
+  "$comment": "Portable must-never list. Mirrored in .cursor/hooks and .claude/settings.example.json. Prose in AGENTS.md is the guide. Adapted from sample-harness-project for this Python package.",
+  "version": 1,
+  "deny": [
+    {
+      "id": "no-env-read",
+      "action": "read",
+      "match": [".env", ".env.*", "secrets/**"],
+      "reason": "Secrets must not enter the prompt or logs"
+    },
+    {
+      "id": "no-force-push",
+      "action": "shell",
+      "match": ["git push --force*", "git push -f*"],
+      "reason": "Irreversible git history rewrite"
+    },
+    {
+      "id": "no-prod-deploy",
+      "action": "shell",
+      "match": ["*kubectl*prod*", "*helm*prod*"],
+      "reason": "Production mutate requires a human gate"
+    },
+    {
+      "id": "no-root-delete",
+      "action": "shell",
+      "match": ["rm -rf /*"],
+      "reason": "Destructive root delete"
+    }
+  ],
+  "ask_before": [
+    "breaking_change_to_process_or_cli",
+    "new_required_network_dependency",
+    "package_or_script_rename"
+  ]
+}

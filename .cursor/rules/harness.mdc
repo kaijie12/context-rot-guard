@@ -1,0 +1,14 @@
+---
+description: context-rot-guard — follow AGENTS.md; never-dos; evidence before done
+alwaysApply: true
+---
+
+# Harness
+
+Follow [AGENTS.md](mdc:AGENTS.md) in this repo.
+
+- Run `python3 -m pytest -q` before claiming done; paste the command and the result.
+- Ask before a breaking `process()` / CLI change, a required network dependency, or a package rename.
+- Do not read `.env*` / `secrets/`; do not force-push, deploy prod, or `rm -rf /`.
+- Respect deny hooks — if blocked, surface the reason and stop that action.
+- Do not weaken `tests/` to make pytest pass.
