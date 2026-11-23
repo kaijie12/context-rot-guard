@@ -148,3 +148,5 @@ Not brought over: the sample’s `src/username.js` red-test fixture (this packag
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+<!-- cloud-readiness-smoke -->
