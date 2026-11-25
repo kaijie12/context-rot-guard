@@ -110,7 +110,7 @@ def test_cli_pulse_ensure_and_hook_script(tmp_path: Path) -> None:
     assert payload["note"] == "no drift detected"
     assert payload["should_speak"] is True  # pulse_every=1 from ensure config
 
-    hook = ROOT / ".cursor" / "hooks" / "rot-pulse.sh"
+    hook = ROOT / ".cursor" / "hooks" / "guard-pulse.sh"
     hooked = subprocess.run(
         ["bash", str(hook)],
         input='{"status":"completed","loop_count":0}',

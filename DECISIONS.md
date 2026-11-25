@@ -14,7 +14,7 @@ Resolved before implementation, from `context-guard-plan.md` §3. Choices follow
 | D8 | Thresholds | **Constructor knobs + defaults** | `compact_every=20`, `anchor_every=5`, `fail_streak=3`, `token_ceiling=8000`, `mention_gap=12`, `side_quest_ratio=0.6`. |
 | D9 | On drift | **Soft warn + block synthetic done** | Drift adds a `[DRIFT]` system note and forces compact + anchor. `attempt_done()` returns `status=blocked` on drift, on a red check, or when no check exists. `--allow-done-on-red` is the only escape, and only for a red check while drift is false. |
 | D10 | Persistence | **One JSON session file** | `.context-guard/session.json` (spec path). Turn history **and** the action event receipt (`events`, capped at 200) live in that file — not a separate JSONL log. Library use with no `session_path` stays in memory. CLI `log` prints the receipt; `quality-check` is the host-facing “should I trust this chat?” command (preview only — does not mark done). |
-| D11 | Names | **`context-guard`** | Renamed from `context-rot-guard` / `context_rot_guard`. Console script `context-guard`. Import `context_guard`. Chat state lives under `.context-guard/chats/<id>.json`. |
+| D11 | Names | **`context-guard`** | Renamed from `context-rot-guard` / `context_rot_guard`. Console script `context-guard`. Import `context_guard`. Chat state lives under `.context-guard/chats/<id>.json`. Cursor hooks are `.cursor/hooks/guard-*.sh` (not `rot-*`). |
 | D15 | Product | **Mission + unit cycle** | Investigate until an explicit mission or unit. Pin that into the model. Redirect only when the open unit is abandoned or the loop escalates. Path novelty and keyword overlap are not drift. |
 
 ## Harness rails brought over

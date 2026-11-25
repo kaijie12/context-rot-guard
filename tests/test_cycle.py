@@ -249,7 +249,7 @@ def test_mission_only_does_not_claim_alignment(tmp_path: Path) -> None:
 def test_hook_script_clean_stop_is_empty() -> None:
     env = {"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin"}
     hooked = subprocess.run(
-        ["bash", str(ROOT / ".cursor/hooks/rot-pulse.sh")],
+        ["bash", str(ROOT / ".cursor/hooks/guard-pulse.sh")],
         input=json.dumps({"status": "completed", "conversation_id": "empty-stop"}),
         cwd=str(ROOT),
         env={**dict(**__import__("os").environ), **env},

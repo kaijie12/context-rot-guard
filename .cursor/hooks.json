@@ -3,25 +3,25 @@
   "hooks": {
     "sessionStart": [
       {
-        "command": ".cursor/hooks/rot-session-start.sh",
+        "command": ".cursor/hooks/guard-session-start.sh",
         "timeout": 15
       }
     ],
     "beforeSubmitPrompt": [
       {
-        "command": ".cursor/hooks/rot-before-prompt.sh",
+        "command": ".cursor/hooks/guard-before-prompt.sh",
         "timeout": 15
       }
     ],
     "afterAgentResponse": [
       {
-        "command": ".cursor/hooks/rot-after-response.sh",
+        "command": ".cursor/hooks/guard-after-response.sh",
         "timeout": 15
       }
     ],
     "postToolUse": [
       {
-        "command": ".cursor/hooks/rot-after-tool.sh",
+        "command": ".cursor/hooks/guard-after-tool.sh",
         "timeout": 15
       }
     ],
@@ -44,7 +44,7 @@
         "loop_limit": 2
       },
       {
-        "command": ".cursor/hooks/rot-pulse.sh",
+        "command": ".cursor/hooks/guard-pulse.sh",
         "timeout": 20,
         "loop_limit": 1
       }
