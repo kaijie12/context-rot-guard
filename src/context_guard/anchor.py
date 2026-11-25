@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from context_rot_guard.models import GoalSpec
+from context_guard.models import GoalSpec
 
 
 def _constraint_block(spec: GoalSpec) -> str:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from context_rot_guard import ContextRotGuard, GoalSpec, SessionDigest
+from context_guard import ContextRotGuard, GoalSpec, SessionDigest
 
 
 def _spec() -> GoalSpec:

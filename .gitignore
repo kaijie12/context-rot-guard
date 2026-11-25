@@ -6,8 +6,14 @@ venv/
 dist/
 *.egg-info/
 .context-rot-guard/
+.context-guard/
 .mypy_cache/
 .env
 .env.*
 !.env.example
 secrets/
+examples/live-run-log.json
+examples/live-build-log.json
+examples/feature-story-log.json
+examples/product-walkthrough.json
+

@@ -19,3 +19,5 @@ def test_demo_prints_compact_anchor_and_drift(capsys) -> None:
     assert "DRIFT drift=true" in out
     assert "goal_verbatim=true" in out
     assert "done_status=blocked" in out
+    assert "EVENT RECEIPT" in out
+    assert "action=drift" in out or "action=blocked_done" in out

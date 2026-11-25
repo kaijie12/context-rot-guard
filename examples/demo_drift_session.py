@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from context_rot_guard import ContextRotGuard, GoalSpec  # noqa: E402
+from context_guard import ContextRotGuard, GoalSpec  # noqa: E402
 
 
 def main() -> int:
@@ -71,8 +71,10 @@ def main() -> int:
     after = guard.process()
     blob = "\n".join(message["content"] for message in after)
     status = guard.status()
+    check = guard.quality_check()
     done = guard.attempt_done()
     kinds = [message["meta"]["kind"] for message in after]
+    actions = [event["action"] for event in guard.events]
 
     print("before_messages=%d raw_turns_at_before=8" % before_count)
     print(
@@ -86,7 +88,21 @@ def main() -> int:
         "DRIFT drift=%s fail_streak=%d reasons=%s"
         % (str(status["drift"]).lower(), status["fail_streak"], ",".join(status["reasons"]))
     )
+    print(
+        "quality_check done_preview=%s exit_would=%s"
+        % (
+            check["done_preview"]["status"],
+            "2" if check["done_preview"]["status"] != "done" else "0",
+        )
+    )
     print("done_status=%s reason=%s" % (done["status"], done.get("reason", "")))
+    print("EVENT RECEIPT")
+    for event in guard.events:
+        reasons = ",".join(event.get("reasons") or []) or "-"
+        print(
+            "  %s action=%s turn=%d reasons=%s"
+            % (event["ts"], event["action"], event["turn"], reasons)
+        )
 
     if spec.goal not in blob:
         print("demo failed: goal text missing after compaction", file=sys.stderr)
@@ -99,6 +115,9 @@ def main() -> int:
         return 1
     if done["status"] != "blocked":
         print("demo failed: synthetic done should be blocked", file=sys.stderr)
+        return 1
+    if "drift" not in actions and "blocked_done" not in actions:
+        print("demo failed: expected a drift or blocked_done event", file=sys.stderr)
         return 1
     if len(after) >= before_count + 30:
         print("demo failed: compaction did not shrink the window", file=sys.stderr)

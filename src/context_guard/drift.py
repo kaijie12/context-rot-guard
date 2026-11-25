@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from context_rot_guard.models import CheckResult, DriftReport, GoalSpec, Turn
+from context_guard.models import CheckResult, DriftReport, GoalSpec, Turn
 
 _STOP = {
     "that",
