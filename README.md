@@ -18,45 +18,44 @@ Install the hooks once. Enable Cursor Hooks. Then chat.
 
 ## How it works in real time
 
-Same chat as the live fixture. Left = what happens in the chat. Right = what context-guard does.
+Same chat as the live / fixture story. Left = chat. Right = what the test asserts context-guard does.
 
-| Step | Chat | context-guard |
-| --- | --- | --- |
-| 1 | You ask why `add()` is missing | Silence |
-| 2 | You set `Current unit: add(a, b)…` | Pins that unit (invisible) |
-| 3 | Agent builds `add.py`, check passes | Still silence |
-| 4 | Agent ships a homepage instead | One line: stay on `add(a, b)` |
-| 5 | You say drop that — do the homepage | Unit updates |
-| 6 | Agent works on the homepage | Silence again |
+| Step | Chat | context-guard | Test asserts |
+| --- | --- | --- | --- |
+| 1 | Ask a question — why is `add()` missing? | Silence | No unit; empty stop |
+| 2 | Name the unit — `Current unit: add(a, b)…` | Pin (invisible) | Unit armed; no spam |
+| 3 | Build on-unit — write `add.py`, check passes | Silence | Follow-up empty |
+| 4 | Sidetrack — marketing homepage / signup | Redirect | One `Still the unit: … add(a, b)…`; unit string unchanged |
+| 5 | You change mind — `Actually drop that…` | Amend | Unit becomes homepage |
+| 6 | Work on new unit — homepage reply | Silence | Quiet again |
 
 ```mermaid
-flowchart TB
-  subgraph chat [Chat]
+flowchart LR
+  subgraph pass [What must pass]
     direction TB
-    c1[1 Ask a question]
-    c2[2 Name the unit]
-    c3[3 Build on-unit]
-    c4[4 Sidetrack]
-    c5[5 You change mind]
-    c6[6 Work on new unit]
-    c1 --> c2 --> c3 --> c4 --> c5 --> c6
+    P1[On-unit reply → empty follow-up]
+    P2[Sidetrack reply → Still the unit]
+    P3[Unit string still add a, b]
   end
-  subgraph guard [context-guard]
+
+  subgraph flow [Story]
     direction TB
-    g1[Silence]
-    g2[Pin]
-    g3[Silence]
-    g4[Redirect]
-    g5[Amend]
-    g6[Silence]
-    g1 --> g2 --> g3 --> g4 --> g5 --> g6
+    c1[1 Ask a question] --> g1[Silence]
+    c2[2 Name the unit] --> g2[Pin]
+    c3[3 Build on-unit] --> g3[Silence]
+    c4[4 Sidetrack] --> g4[Redirect]
+    c5[5 You change mind] --> g5[Amend]
+    c6[6 Work on new unit] --> g6[Silence]
+    g1 --> c2
+    g2 --> c3
+    g3 --> c4
+    g4 --> c5
+    g5 --> c6
   end
-  c1 -.-> g1
-  c2 -.-> g2
-  c3 -.-> g3
-  c4 -.-> g4
-  c5 -.-> g5
-  c6 -.-> g6
+
+  c3 -.-> P1
+  c4 -.-> P2
+  c4 -.-> P3
 ```
 
 ## What this is not

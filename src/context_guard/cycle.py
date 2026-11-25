@@ -215,20 +215,10 @@ class ChatCycle:
             lines.append("No unit yet.")
         return "\n".join(lines)
 
-    def abandoned(self, assistant: str) -> bool:
+    def unit_words(self) -> set[str]:
+        """Tokens from the open unit used to decide 'mentions unit'."""
         if not self.unit:
-            return False
-        text = (assistant or "").strip()
-        if not text:
-            return False
-        low = text.lower()
-        if any(cue in low for cue in _ABANDON):
-            return True
-        if _DONE_CLAIM.search(text) and self.verdict() != "pass":
-            return True
-        # Realistic sidetrack: reply names other work and does not mention the unit.
-        # Split path/underscore noise so "examples/live_fixture/add.py" does not
-        # make every reply under that folder look on-unit.
+            return set()
         goal = self.unit["goal"].lower()
         goal_tokens = re.sub(r"[/\\._]+", " ", goal)
         words = {
@@ -237,22 +227,86 @@ class ChatCycle:
             if word not in _STOP and len(word) >= 3
         }
         words.update(re.findall(r"\b([a-z][a-z0-9_]{2,})\s*\(", goal))
-        mentions_unit = any(word in low for word in words)
-        if words and not mentions_unit and _OTHER_WORK.search(text):
-            return True
-        return False
+        return words
+
+    def explain_assistant(self, assistant: str) -> dict[str, Any]:
+        """Why context-guard would silence or redirect on this assistant text.
+
+        The *model* does not decide this — the product does, from the open unit
+        and the assistant reply. User amend is a separate path (observe_user).
+        """
+        text = (assistant or "").strip()
+        out: dict[str, Any] = {
+            "phase": self.phase,
+            "mission": self.mission,
+            "unit": (self.unit or {}).get("goal"),
+            "assistant_excerpt": text[:240],
+            "action": "silence",
+            "reason": "no open unit",
+            "followup": None,
+        }
+        if not self.unit:
+            return out
+        if not text:
+            out["reason"] = "empty assistant text"
+            return out
+        low = text.lower()
+        words = self.unit_words()
+        hits = sorted(word for word in words if word in low)
+        other = _OTHER_WORK.search(text)
+        out["unit_words"] = sorted(words)
+        out["unit_word_hits"] = hits
+        out["other_work_match"] = other.group(0) if other else None
+
+        if any(cue in low for cue in _ABANDON):
+            out["action"] = "redirect"
+            out["reason"] = "assistant used an explicit abandon cue"
+            out["kind"] = "model_sidetrack"
+        elif _DONE_CLAIM.search(text) and self.verdict() != "pass":
+            out["action"] = "redirect"
+            out["reason"] = "done claim while unit check is not pass"
+            out["kind"] = "model_sidetrack"
+        elif words and not hits and other:
+            out["action"] = "redirect"
+            out["reason"] = (
+                "assistant names other work (%s) and does not mention unit words %s"
+                % (other.group(0), sorted(words))
+            )
+            out["kind"] = "model_sidetrack"
+        elif self.verdict() == "escalate":
+            out["action"] = "escalate"
+            out["reason"] = "repeated failing checks"
+            out["kind"] = "loop_escalate"
+        elif hits and other:
+            out["reason"] = (
+                "other work mentioned but unit words still present (%s) — treat as on-unit"
+                % hits
+            )
+            out["kind"] = "on_unit"
+        else:
+            out["reason"] = "on-unit (no abandon pattern)"
+            out["kind"] = "on_unit"
+        return out
+
+    def abandoned(self, assistant: str) -> bool:
+        return self.explain_assistant(assistant).get("action") == "redirect"
 
     def followup(self, assistant: str = "") -> str | None:
         if assistant:
             self.last_assistant = assistant
         if not self.unit:
             return None
-        if self.abandoned(assistant or self.last_assistant):
+        explained = self.explain_assistant(assistant or self.last_assistant)
+        if explained.get("action") == "redirect":
             unit = self.unit["goal"].strip().rstrip(".")
-            self.events.append({"action": "redirect", "unit": unit})
-            return "[context-guard] Still the unit: %s. Continue only that." % unit
-        if self.verdict() == "escalate":
-            return "[context-guard] Stop and replan. Unit still: %s." % self.unit["goal"]
+            self.events.append({"action": "redirect", "unit": unit, "reason": explained.get("reason")})
+            note = "[context-guard] Still the unit: %s. Continue only that." % unit
+            explained["followup"] = note
+            return note
+        if explained.get("action") == "escalate" or self.verdict() == "escalate":
+            note = "[context-guard] Stop and replan. Unit still: %s." % self.unit["goal"]
+            explained["followup"] = note
+            return note
         return None
 
 

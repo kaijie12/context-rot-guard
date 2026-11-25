@@ -194,6 +194,19 @@ def write_log(payload: dict) -> None:
     LOG.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def print_lane(lane: dict) -> None:
+    print("")
+    print("── %s ──" % lane.get("title", "lane"))
+    print("WHO:      %s" % lane.get("who"))
+    print("CHAT:     %s" % lane.get("chat"))
+    print("PRODUCT:  %s" % lane.get("product"))
+    if lane.get("why"):
+        print("WHY:      %s" % lane["why"])
+    if lane.get("mission") is not None or lane.get("unit") is not None:
+        print("MISSION:  %s" % (lane.get("mission") or "(none)"))
+        print("UNIT:     %s" % (lane.get("unit") or "(none)"))
+
+
 def main() -> int:
     maybe_reexec_venv()
     blocked = need_sdk()
@@ -251,26 +264,111 @@ def main() -> int:
         )
         return fail("Cursor SDK agent failed: %s" % exc, 2)
 
-    # Product checks on fresh replies (never the fixture sentences).
-    cycle = ChatCycle("live-run")
-    cycle.start_unit(UNIT_GOAL)
-    on_unit_followup = cycle.followup(on_unit_reply)
-    sidetrack_followup = cycle.followup(sidetrack_reply)
-    unit_after = (cycle.unit or {}).get("goal") or ""
+    # Product decisions on fresh replies. The model does not set mission or
+    # detect sidetrack — ChatCycle does, from user text + assistant text.
+    print("")
+    print("context-guard decisions (model does not pick these)")
+    print("two leave-unit paths:")
+    print("  1) MODEL sidetrack → redirect Still the unit")
+    print("  2) USER amend     → Actually drop that… → new unit, silence")
 
+    cycle = ChatCycle("live-run")
+    user_unit_prompt = "Current unit: %s" % UNIT_GOAL
+    cycle.observe_user(user_unit_prompt)
+    arm = {
+        "title": "1 Arm unit (user)",
+        "who": "user",
+        "chat": user_unit_prompt,
+        "product": "Pin armed (invisible). Mission copied from unit if empty.",
+        "why": "observe_user matched Current unit: … — not the model",
+        "mission": cycle.mission,
+        "unit": (cycle.unit or {}).get("goal"),
+        "events": list(cycle.events),
+    }
+    print_lane(arm)
+
+    on_explain = cycle.explain_assistant(on_unit_reply)
+    on_unit_followup = cycle.followup(on_unit_reply)
+    on_lane = {
+        "title": "2 Build on-unit (model)",
+        "who": "model",
+        "chat": (on_unit_reply or "")[:300],
+        "product": on_unit_followup or "Silence",
+        "why": on_explain.get("reason"),
+        "kind": on_explain.get("kind"),
+        "unit_word_hits": on_explain.get("unit_word_hits"),
+        "other_work_match": on_explain.get("other_work_match"),
+        "mission": cycle.mission,
+        "unit": (cycle.unit or {}).get("goal"),
+        "unit_check_exit": unit_check_exit,
+    }
+    print_lane(on_lane)
+
+    side_explain = cycle.explain_assistant(sidetrack_reply)
+    sidetrack_followup = cycle.followup(sidetrack_reply)
+    side_lane = {
+        "title": "3 Model sidetrack (model leaves unit)",
+        "who": "model",
+        "chat": (sidetrack_reply or "")[:300],
+        "product": sidetrack_followup or "Silence (UNEXPECTED)",
+        "why": side_explain.get("reason"),
+        "kind": side_explain.get("kind"),
+        "unit_word_hits": side_explain.get("unit_word_hits"),
+        "other_work_match": side_explain.get("other_work_match"),
+        "mission": cycle.mission,
+        "unit": (cycle.unit or {}).get("goal"),
+    }
+    print_lane(side_lane)
+    unit_after_model = (cycle.unit or {}).get("goal") or ""
+
+    # User amend is the other leave-unit path — not a redirect.
+    amend_prompt = "Actually drop that. Design the homepage instead."
+    cycle.observe_user(amend_prompt)
+    after_amend = cycle.explain_assistant(sidetrack_reply)
+    amend_followup = cycle.followup(sidetrack_reply)
+    amend_lane = {
+        "title": "4 User amend (user leaves old unit)",
+        "who": "user",
+        "chat": amend_prompt,
+        "product": amend_followup or "Silence — unit amended; same homepage text is now on-unit",
+        "why": (
+            "observe_user matched Actually drop that. … — amends unit. "
+            "Not a model_sidetrack redirect. After amend: %s"
+            % after_amend.get("reason")
+        ),
+        "kind": "user_amend",
+        "mission": cycle.mission,
+        "unit": (cycle.unit or {}).get("goal"),
+    }
+    print_lane(amend_lane)
+
+    lanes = [arm, on_lane, side_lane, amend_lane]
     decisions = {
         "on_unit_followup": on_unit_followup,
         "sidetrack_followup": sidetrack_followup,
-        "unit_after_sidetrack": unit_after,
+        "unit_after_model_sidetrack": unit_after_model,
+        "unit_after_user_amend": (cycle.unit or {}).get("goal"),
+        "amend_followup": amend_followup,
+        "events": list(cycle.events),
     }
 
     write_log(
         {
             "timestamp": started,
             "model": model_label,
+            "how_mission_is_set": (
+                "User text (Current unit: / Mission: / CLI) via observe_user — "
+                "the coding model does not choose the mission."
+            ),
+            "how_sidetrack_is_detected": (
+                "ChatCycle.abandoned / explain_assistant on assistant text: "
+                "other-work cues without unit words → redirect. "
+                "User amend is a different path (Actually drop that…)."
+            ),
             "on_unit_reply": on_unit_reply,
             "sidetrack_reply": sidetrack_reply,
             "unit_check_exit": unit_check_exit,
+            "lanes": lanes,
             "decision": decisions,
         }
     )
@@ -293,12 +391,16 @@ def main() -> int:
         )
     elif "no drift" in (sidetrack_followup or "").lower():
         errors.append("redirect must not say no drift")
-    if "add(a, b)" not in unit_after:
-        errors.append("unit string lost after homepage reply: %r" % unit_after)
+    if "add(a, b)" not in unit_after_model:
+        errors.append("unit string lost after homepage reply: %r" % unit_after_model)
     if not looks_like_homepage(sidetrack_reply, HOMEPAGE):
         errors.append(
             "model did not sidetrack (no HOMEPAGE.md / homepage description) — harness miss"
         )
+    if amend_followup:
+        errors.append("after user amend, homepage reply should be quiet, got %r" % amend_followup)
+    if "homepage" not in ((cycle.unit or {}).get("goal") or "").lower():
+        errors.append("user amend did not switch unit to homepage: %s" % cycle.unit)
 
     if errors:
         for err in errors:
@@ -306,9 +408,11 @@ def main() -> int:
         print("Wrote %s" % LOG, file=sys.stderr)
         return 1
 
+    print("")
     print("PASS live stay_on_unit (%s)" % model_label)
     print("Wrote %s" % LOG)
     return 0
+
 
 
 if __name__ == "__main__":
