@@ -7,7 +7,6 @@ You are working in **context-rot-guard**: a Python library and CLI that compress
 | Gate | Command |
 | --- | --- |
 | Unit | `python3 -m pytest -q` |
-| New feature | Follow [`.cursor/skills/follow-the-loop/SKILL.md`](.cursor/skills/follow-the-loop/SKILL.md). Run `python3 -m context_rot_guard feature start` and write the acceptance file before product code. |
 
 From a fresh checkout, install the test runner first: `python3 -m pip install -e ".[dev]"`.
 

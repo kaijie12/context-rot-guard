@@ -9,11 +9,8 @@ from typing import Any, Callable
 from context_rot_guard.anchor import anchor_due, render_anchor, render_pin
 from context_rot_guard.compress import build_digest, estimate_tokens, render_digest, truncate_text
 from context_rot_guard.drift import evaluate_mechanical, render_drift_note
-from context_rot_guard.loop import build_packet, build_verdict, contract_for_check, render_correction
 from context_rot_guard.models import (
     CheckResult,
-    CorrectionPacket,
-    DoneVerdict,
     DriftReport,
     GoalSpec,
     GuardConfig,
@@ -111,11 +108,6 @@ class ContextRotGuard:
             self.spec.done_means = done_means
         if check_cmd is not None:
             self.spec.check_cmd = check_cmd
-            previous = self.spec.acceptance
-            unit_id = previous.unit_id if previous is not None else "session"
-            self.spec.acceptance = contract_for_check(check_cmd, unit_id=unit_id)
-            if previous is not None and previous.not_a_check:
-                self.spec.acceptance.not_a_check = list(previous.not_a_check)
         if allow_paths is not None:
             self.spec.allow_paths = list(allow_paths)
         self.digest = None
@@ -211,37 +203,41 @@ class ContextRotGuard:
                     "meta": {"kind": "drift"},
                 }
             )
-        packet = build_packet(self.spec, build_verdict(self.spec, self.config, self.checks, report))
-        if packet is not None:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": render_correction(packet),
-                    "meta": {"kind": "correction", "next_route": packet.next_route},
-                }
-            )
         self._save()
         return messages
 
-    def verdict(self) -> DoneVerdict:
-        """Full done-gate result, including attempt-cap and no-progress exits."""
-        return build_verdict(self.spec, self.config, self.checks, self.evaluate())
-
-    def correction_packet(self) -> CorrectionPacket | None:
-        """The failed unit to hand back. None when the session may pass or has no check yet."""
-        return build_packet(self.spec, self.verdict())
-
     def attempt_done(self) -> dict[str, Any]:
-        """Refuse `status=done` on drift, on a red check, or with no check at all.
-
-        With `max_check_attempts` or `no_progress_window` set, a blocked result
-        can also use reason `attempt_cap` or `no_progress` (`next_route=escalate`).
-        """
-        return self.verdict().to_legacy()
+        """Refuse `status=done` on drift, on a red check, or with no check at all."""
+        report = self.evaluate()
+        last = self.checks[-1] if self.checks else None
+        if report.drift:
+            return {
+                "status": "blocked",
+                "reason": "drift",
+                "reasons": list(report.reasons),
+                "drift": True,
+                "fail_streak": report.fail_streak,
+            }
+        if last is None:
+            return {"status": "blocked", "reason": "no_verify", "drift": False}
+        if last.exit_code != 0 and self.config.block_done_on_red:
+            return {
+                "status": "blocked",
+                "reason": "verify_red",
+                "exit_code": last.exit_code,
+                "drift": False,
+            }
+        payload: dict[str, Any] = {
+            "status": "done",
+            "drift": False,
+            "exit_code": last.exit_code,
+        }
+        if last.exit_code != 0:
+            payload["warning"] = "verify_red"
+        return payload
 
     def status(self) -> dict[str, Any]:
         report = self.evaluate()
-        verdict = build_verdict(self.spec, self.config, self.checks, report)
         last = self.checks[-1].to_dict() if self.checks else None
         return {
             "goal": self.spec.goal,
@@ -254,10 +250,6 @@ class ContextRotGuard:
             "block_done": report.block_done,
             "last_check": last,
             "signals": report.signals,
-            "attempt": verdict.attempt,
-            "next_route": verdict.next_route,
-            "failed_rule": verdict.failed_rule,
-            "verdict": verdict.to_dict(),
         }
 
     def _pin_text(self) -> str:

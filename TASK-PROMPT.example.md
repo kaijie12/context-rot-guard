@@ -6,8 +6,6 @@ Copy into an Agent chat when you want a change in this repo. This file is a temp
 
 Change only what the task names in `context-rot-guard`. Do not add an embedding client, a UI, or a second test runner.
 
-**If this is a new feature:** follow `.cursor/skills/follow-the-loop/SKILL.md`. Run `python3 -m context_rot_guard feature start` and land `acceptance.json` before implementation code. One unit. Stop on attempt cap or identical red output.
-
 **Closed loop (required):**
 
 1. Keep going until this check is green:

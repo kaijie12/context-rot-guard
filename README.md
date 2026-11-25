@@ -78,23 +78,7 @@ messages = guard.process()          # list to send to the model
 report = guard.attempt_done()       # {"status": "blocked", ...} while verify is red
 ```
 
-`process()` always starts with a pin (the digest, once compaction has run). It appends an anchor every `anchor_every` turns, on drift, and when called with `before_completion=True`. A red check also appends a correction (`meta.kind=correction`) for that unit only. Tool turns longer than 1200 characters are truncated, head and tail kept.
-
-## New feature, same loop
-
-Every feature starts the same way. The skill is [`.cursor/skills/follow-the-loop/SKILL.md`](.cursor/skills/follow-the-loop/SKILL.md). The always-on rule points at it. Scaffold the unit before writing product code:
-
-```bash
-context-rot-guard feature start \
-  --slug export-api \
-  --goal "Add a CSV export" \
-  --done-means "pytest -q exits 0" \
-  --check-cmd "pytest -q" \
-  --allow-path src/context_rot_guard/export.py \
-  --constraint "do not edit tests to force green"
-```
-
-That writes `.context-rot-guard/features/export-api/acceptance.json` and `BRIEF.md` (gitignored session state, regenerated per feature). `BRIEF.md` includes the `init` line. Pass `--max-check-attempts 3` and `--no-progress-window 2` on `init` when the session should stop and escalate instead of polishing a red check. Copy the skill folder into another repo to reuse the procedure; point `--check-cmd` at that repo's oracle.
+`process()` always starts with a pin (the digest, once compaction has run). It appends an anchor every `anchor_every` turns, on drift, and when called with `before_completion=True`. Tool turns longer than 1200 characters are truncated, head and tail kept.
 
 Knobs (also CLI flags on `init`): `compact_every`, `anchor_every`, `fail_streak`, `token_ceiling`, `mention_gap`, `side_quest_ratio`. Token estimates are `len(text) // 4`.
 
@@ -139,14 +123,12 @@ Developing *this* repo uses the Stage C / Stage D rails from the prep notes' `ag
 | [`.claude/settings.example.json`](.claude/settings.example.json) | Same deny + stop shape for Claude Code |
 | [`sandbox.example.toml`](sandbox.example.toml) | Illustrative sandbox and budget |
 | [`TASK-PROMPT.example.md`](TASK-PROMPT.example.md) | Copy-paste closed-loop prompt |
-| [`.cursor/skills/follow-the-loop/SKILL.md`](.cursor/skills/follow-the-loop/SKILL.md) | Procedure for every new feature |
-| [`.cursor/rules/follow-the-loop.mdc`](.cursor/rules/follow-the-loop.mdc) | Always-on pointer at that skill |
 
 Not brought over: the sample’s `src/username.js` red-test fixture (this package’s tests start green), `pnpm typecheck` as the stop oracle, and human gates for schema migrations or user-visible sends. Those do not apply to a library with no database and no outbound messaging. The product’s own “don’t say done while the check is red” rule is what `attempt_done()` enforces for sessions; `AGENTS.md` tells the coding agent not to bypass it.
 
 ## Non-goals (v1)
 
-- IDE extension, published plugin, or a dashboard (the in-repo follow-the-loop skill is the setup, not a product surface)
+- IDE extension, Cursor skill package, or a dashboard
 - Real embedding drift
 - Multi-agent or multi-session orchestration
 - Driving Aider, Cline, Goose, or Cursor itself
