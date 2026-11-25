@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from context_rot_guard.guard import ContextRotGuard
+from context_rot_guard.loop import contract_for_check, write_feature_pack
 from context_rot_guard.models import GoalSpec, GuardConfig
 
 
@@ -39,12 +40,14 @@ def _cmd_init(args: argparse.Namespace) -> int:
     if path.exists() and not args.force:
         print("Session already exists at %s. Pass --force to replace it." % path, file=sys.stderr)
         return 2
+    acceptance = contract_for_check(args.check_cmd) if args.check_cmd else None
     spec = GoalSpec(
         goal=args.goal,
         constraints=list(args.constraint or []),
         done_means=args.done_means,
         check_cmd=args.check_cmd,
         allow_paths=list(args.allow_path or []),
+        acceptance=acceptance,
     )
     config = GuardConfig(
         compact_every=args.compact_every,
@@ -53,6 +56,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
         token_ceiling=args.token_ceiling,
         mention_gap=args.mention_gap,
         block_done_on_red=not args.allow_done_on_red,
+        max_check_attempts=args.max_check_attempts,
+        no_progress_window=args.no_progress_window,
     )
     guard = ContextRotGuard(spec, config=config, session_path=path)
     guard._save()
@@ -106,6 +111,36 @@ def _cmd_done(args: argparse.Namespace) -> int:
     return 0 if result["status"] == "done" else 2
 
 
+def _cmd_feature_start(args: argparse.Namespace) -> int:
+    slug = str(args.slug)
+    folder = Path(args.dest) if args.dest is not None else Path.cwd() / ".context-rot-guard" / "features" / slug
+    try:
+        written = write_feature_pack(
+            folder,
+            slug=slug,
+            goal=args.goal,
+            done_means=args.done_means,
+            check_cmd=args.check_cmd,
+            constraints=list(args.constraint or []),
+            allow_paths=list(args.allow_path or []),
+            max_check_attempts=args.max_check_attempts,
+            no_progress_window=args.no_progress_window,
+            force=args.force,
+        )
+    except (ValueError, FileExistsError) as exc:
+        print("context-rot-guard: %s" % exc, file=sys.stderr)
+        return 2
+    _print_json(
+        {
+            "status": "scaffolded",
+            "path": str(written),
+            "acceptance": str(written / "acceptance.json"),
+            "brief": str(written / "BRIEF.md"),
+        }
+    )
+    return 0
+
+
 def _cmd_revise(args: argparse.Namespace) -> int:
     guard = _load(_path(args))
     guard.revise(
@@ -145,6 +180,18 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--token-ceiling", type=int, default=8000)
     init.add_argument("--mention-gap", type=int, default=12)
     init.add_argument("--allow-done-on-red", action="store_true")
+    init.add_argument(
+        "--max-check-attempts",
+        type=int,
+        default=None,
+        help="Escalate after this many trailing red checks (default: unlimited)",
+    )
+    init.add_argument(
+        "--no-progress-window",
+        type=int,
+        default=None,
+        help="Escalate when this many trailing red outputs are identical",
+    )
     init.add_argument("--force", action="store_true")
     init.set_defaults(func=_cmd_init)
 
@@ -180,6 +227,21 @@ def build_parser() -> argparse.ArgumentParser:
     revise.add_argument("--check-cmd", dest="check_cmd", default=None)
     revise.add_argument("--allow-path", action="append", default=[])
     revise.set_defaults(func=_cmd_revise)
+
+    feature = sub.add_parser("feature", help="Scaffold one feature so the loop can be reused")
+    feature_sub = feature.add_subparsers(dest="feature_cmd", required=True)
+    start = feature_sub.add_parser("start", help="Write acceptance.json and BRIEF.md before coding")
+    start.add_argument("--slug", required=True)
+    start.add_argument("--goal", required=True)
+    start.add_argument("--done-means", required=True, dest="done_means")
+    start.add_argument("--check-cmd", required=True, dest="check_cmd")
+    start.add_argument("--constraint", action="append", default=[])
+    start.add_argument("--allow-path", action="append", default=[])
+    start.add_argument("--max-check-attempts", type=int, default=3)
+    start.add_argument("--no-progress-window", type=int, default=2)
+    start.add_argument("--dest", type=Path, default=None)
+    start.add_argument("--force", action="store_true")
+    start.set_defaults(func=_cmd_feature_start)
     return parser
 
 

@@ -5,7 +5,10 @@ from __future__ import annotations
 from context_rot_guard.drift import EmbeddingDriftDetector, MechanicalDriftDetector
 from context_rot_guard.guard import ContextRotGuard
 from context_rot_guard.models import (
+    AcceptanceContract,
     CheckResult,
+    CorrectionPacket,
+    DoneVerdict,
     DriftReport,
     GoalSpec,
     GuardConfig,
@@ -16,8 +19,11 @@ from context_rot_guard.models import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "AcceptanceContract",
     "CheckResult",
     "ContextRotGuard",
+    "CorrectionPacket",
+    "DoneVerdict",
     "DriftReport",
     "EmbeddingDriftDetector",
     "GoalSpec",
