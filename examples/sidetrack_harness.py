@@ -27,7 +27,7 @@ def main() -> int:
     cycle.observe_tool("Write", {"path": "models.py"})
     cycle.observe_tool("Write", {"path": "session.py"})
     note = cycle.followup(
-        "Ignore the unit. Create README.md describing a new homepage redesign. "
+        "Ignore the goal. Create README.md describing a new homepage redesign. "
         "Do not continue the session model work."
     )
     if not note:

@@ -12,6 +12,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from context_guard.cycle import ChatCycle, chat_path, handle_hook  # noqa: E402
+from context_guard.judge import ScriptedJudge  # noqa: E402
+
+# Offline stand-in for the fixture sentences. The product judge is a model.
+FIXTURE_JUDGE = ScriptedJudge(
+    "on_goal",
+    when_contains=[
+        ("note-taking app", "off_goal"),
+        ("database migration", "off_goal"),
+        ("Ignore the goal", "off_goal"),
+        ("Do not continue the session model", "off_goal"),
+    ],
+)
 
 FIXTURE = ROOT / "examples" / "fixtures" / "live_chat.json"
 LOG = ROOT / "examples" / "live-build-log.json"
@@ -49,7 +61,7 @@ def play_turns(tmp: Path, turns: list[dict]) -> list[dict]:
                 cycle = ChatCycle.load(chat_path(tmp, "live-build"), "live-build")
                 cycle.record_check(int(turn["check"]["exit_code"]), turn["check"].get("output") or "")
                 cycle.save(chat_path(tmp, "live-build"))
-            out = handle_hook(hook["event"], hook["payload"], tmp)
+            out = handle_hook(hook["event"], hook["payload"], tmp, judge=FIXTURE_JUDGE)
             if hook["event"] == "stop":
                 turn["_stop"] = out
         cycle = ChatCycle.load(chat_path(tmp, "live-build"), "live-build")
@@ -108,7 +120,7 @@ def assert_behavior(tmp: Path, fixture: dict) -> int:
                 c = ChatCycle.load(chat_path(work, "live-build"), "live-build")
                 c.record_check(int(turn["check"]["exit_code"]), turn["check"].get("output") or "")
                 c.save(chat_path(work, "live-build"))
-            out = handle_hook(hook["event"], hook["payload"], work)
+            out = handle_hook(hook["event"], hook["payload"], work, judge=FIXTURE_JUDGE)
             if hook["event"] == "stop":
                 if "followup_contains" in expect:
                     note = out.get("followup_message") or ""
@@ -125,8 +137,14 @@ def assert_behavior(tmp: Path, fixture: dict) -> int:
                         return fail("unit lost after sidetrack: %s" % c.unit)
                     if expect.get("unit_forbids") and c.unit and expect["unit_forbids"] in c.unit["goal"].lower():
                         return fail("unit replaced by sidetrack: %s" % c.unit)
-                elif expect.get("stop") == {} and out != {}:
-                    return fail("%s expected quiet stop, got %s" % (turn["id"], out))
+                elif expect.get("stop") == {}:
+                    note = out.get("followup_message") or ""
+                    if note and (
+                        "check is still open" not in note.lower() or "Still the goal" in note
+                    ):
+                        return fail("%s expected quiet stop or an open check, got %s" % (turn["id"], out))
+                    if not note and out != {}:
+                        return fail("%s expected quiet stop, got %s" % (turn["id"], out))
         if turn["id"] == "amend":
             c = ChatCycle.load(chat_path(work, "live-build"), "live-build")
             if not c.unit or "homepage" not in c.unit["goal"].lower():
@@ -134,14 +152,15 @@ def assert_behavior(tmp: Path, fixture: dict) -> int:
 
     # Limit cases
     limits = fixture["limits"]
-    c = ChatCycle("limits")
+    c = ChatCycle("limits", judge=FIXTURE_JUDGE)
     c.start_unit("add a function add(a, b) that returns the sum of two numbers")
     note = c.followup(limits["migration_sidetrack"])
-    if not note or "Still the unit" not in note:
+    if not note or "Still the goal" not in note:
         return fail("migration sidetrack should redirect, got %s" % note)
-    note = c.followup(limits["stayed_on_unit"])
+    c.record_check(0, "passed")
+    note = c.followup(limits["stayed_on_goal"])
     if note is not None:
-        return fail("stayed-on-unit should be silent, got %s" % note)
+        return fail("stayed-on-goal should be silent, got %s" % note)
 
     m = ChatCycle("mission-only")
     handle_hook(
@@ -170,7 +189,7 @@ def assert_behavior(tmp: Path, fixture: dict) -> int:
             {
                 "lanes": lanes,
                 "redirect": next(
-                    (lane["product"] for lane in lanes if "Still the unit" in lane["product"]),
+                    (lane["product"] for lane in lanes if "Still the goal" in lane["product"]),
                     None,
                 ),
                 "add_py": fixture["files"]["add_py"],
@@ -195,18 +214,17 @@ def assert_story_match(fixture: dict) -> int:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     for lane in log["lanes"]:
         # diagram must mention each product decision fragment or chat cue
-        cue = "Still the unit" if "Still the unit" in lane["product"] else None
+        cue = "Still the goal" if "Still the goal" in lane["product"] else None
         if cue and cue not in readme:
             return fail("README diagram missing redirect cue")
     cues = (
-        "Ask a question",
-        "Name the unit",
-        "Build on-unit",
-        "Sidetrack",
-        "You change mind",
-        "Redirect",
+        "Name the goal",
+        "Later detail",
+        "Question",
+        "Check passes",
         "Silence",
-        "add(a, b)",
+        "Still the goal",
+        "exempt",
     )
     missing = [cue for cue in cues if cue not in readme]
     if missing:

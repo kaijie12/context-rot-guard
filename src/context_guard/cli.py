@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from context_guard.cycle import ChatCycle, chat_path, handle_hook
+from context_guard.cycle import ChatCycle, chat_path, handle_hook, prompts_from_transcript
 from context_guard.guard import ContextRotGuard
 from context_guard.models import GoalSpec, GuardConfig
 
@@ -217,19 +217,53 @@ def _cmd_unit_start(args: argparse.Namespace) -> int:
     cycle, path = _load_cycle(args)
     if args.mission:
         cycle.observe_user(args.mission if args.mission.lower().startswith("mission:") else "Mission: %s" % args.mission)
-    cycle.start_unit(args.goal, args.done_means or "", amended=bool(cycle.unit))
+    cycle.start_goal(
+        args.goal,
+        args.done_means or "",
+        amended=bool(cycle.goal),
+        check=args.check or "",
+    )
     cycle.save(path)
     _print_json(
         {
-            "status": "unit",
+            "status": "goal",
             "session": str(path),
             "phase": cycle.phase,
             "mission": cycle.mission,
-            "unit": cycle.unit,
+            "goal": cycle.goal,
             "pin": cycle.pin(),
         }
     )
     return 0
+
+
+def _cmd_goal_show(args: argparse.Namespace) -> int:
+    cycle, _path = _load_cycle(args)
+    sys.stdout.write(cycle.show())
+    if not cycle.show().endswith("\n"):
+        sys.stdout.write("\n")
+    return 0
+
+
+def _cmd_goal_recover(args: argparse.Namespace) -> int:
+    cycle, path = _load_cycle(args)
+    if getattr(args, "transcript", None):
+        extra = prompts_from_transcript(args.transcript)
+        if extra:
+            # Prefer transcript when the sidecar is empty or thin.
+            if len(cycle.prompts) < len(extra):
+                cycle.prompts = list(extra)
+            else:
+                for line in extra:
+                    if line not in cycle.prompts:
+                        cycle.prompts.append(line)
+    cycle.recover_from_prompts()
+    cycle.save(path)
+    shown = cycle.show()
+    sys.stdout.write(shown)
+    if not shown.endswith("\n"):
+        sys.stdout.write("\n")
+    return 0 if cycle.goal else 1
 
 
 def _cmd_hook(args: argparse.Namespace) -> int:
@@ -375,15 +409,38 @@ def build_parser() -> argparse.ArgumentParser:
     revise.add_argument("--allow-path", action="append", default=[])
     revise.set_defaults(func=_cmd_revise)
 
-    unit = sub.add_parser("unit", help="Name the current unit of a large task")
-    unit_sub = unit.add_subparsers(dest="unit_cmd", required=True)
-    unit_start = unit_sub.add_parser("start", parents=[common], help="Open or replace the current unit")
-    unit_start.add_argument("--goal", required=True)
-    unit_start.add_argument("--done-means", dest="done_means", default="")
-    unit_start.add_argument("--mission", default=None)
-    unit_start.add_argument("--conversation", default="default")
-    unit_start.add_argument("--root", type=Path, default=None)
-    unit_start.set_defaults(func=_cmd_unit_start)
+    def _add_goal_parser(name: str) -> None:
+        parser = sub.add_parser(name, help="Name the current goal of a large task")
+        parser_sub = parser.add_subparsers(dest="goal_cmd", required=True)
+        start = parser_sub.add_parser("start", parents=[common], help="Open or replace the current goal")
+        start.add_argument("--goal", required=True)
+        start.add_argument("--done-means", dest="done_means", default="")
+        start.add_argument("--check", default="")
+        start.add_argument("--mission", default=None)
+        start.add_argument("--conversation", default="default")
+        start.add_argument("--root", type=Path, default=None)
+        start.set_defaults(func=_cmd_unit_start)
+        show = parser_sub.add_parser("show", parents=[common], help="Print the living goal")
+        show.add_argument("--conversation", default="default")
+        show.add_argument("--root", type=Path, default=None)
+        show.set_defaults(func=_cmd_goal_show)
+        recover = parser_sub.add_parser(
+            "recover",
+            parents=[common],
+            help="Scan this chat's history and arm a living goal",
+        )
+        recover.add_argument("--conversation", default="default")
+        recover.add_argument("--root", type=Path, default=None)
+        recover.add_argument(
+            "--transcript",
+            type=Path,
+            default=None,
+            help="Optional Cursor JSONL transcript to merge into prompts",
+        )
+        recover.set_defaults(func=_cmd_goal_recover)
+
+    _add_goal_parser("goal")
+    _add_goal_parser("unit")  # deprecated alias
 
     hook = sub.add_parser("hook", help="Cursor hook adapter (JSON stdin, hook JSON stdout)")
     hook.add_argument(

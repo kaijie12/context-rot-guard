@@ -1,6 +1,6 @@
 # Agent instructions (context-guard)
 
-You are working in **context-guard**: a Python library and CLI that keeps the current unit of a chat in front of the model and redirects only when that unit is abandoned. Prefer small, reversible edits. Do not add an embedding provider, a UI, or a full agent runner unless the ask says so. Decisions live in `DECISIONS.md`.
+You are working in **context-guard**: a Python library and CLI that keeps the current goal of a chat in front of the model and redirects only when that unit is abandoned. Prefer small, reversible edits. Do not add an embedding provider, a UI, or a full agent runner unless the ask says so. Decisions live in `DECISIONS.md`.
 
 ## How to check (closed loop)
 

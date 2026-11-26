@@ -1,91 +1,83 @@
-Feature: Stay on the current unit
-  As a developer in a coding chat
-  I want context-guard quiet while the agent works the unit
-  And one short redirect only if that unit is abandoned
-  So the chat stays on the ask without status spam
+Feature: Living goal and the check loop
+  As a developer who adds rules after the goal is named
+  I want those rules kept on a goal I can open at any time
+  And I want a check, not the model's confidence, to decide when the work is finished
+  So a late rule is not lost and a stopped-short run is not treated as done
 
-  # ── Who decides what ─────────────────────────────────────────
-  # Mission / unit come from the USER (or CLI), never from the model:
-  #   "Current unit: …"  "Mission: …"  "Actually drop that. …"
-  # Sidetrack of the MODEL is detected by context-guard on assistant text:
-  #   other-work cues (homepage, migration, …) without unit words → redirect
-  # Two leave-unit paths:
-  #   1) MODEL leaves  → Still the unit (redirect)
-  #   2) USER leaves   → Actually drop that… (amend; no redirect)
+  # Spec: the problem statement. User lines below are the user's words.
+  # Assistant text is not invented. The off-goal case names a judge verdict.
+  # A real subagent run comes after the offline suite is green.
   #
-  # ── How to run ───────────────────────────────────────────────
-  # Live (Composer 2.5 — needs cursor-sdk + CURSOR_API_KEY):
-  #   python3 examples/run_stay_on_unit_live.py
-  #   → prints WHO / CHAT / PRODUCT / WHY lanes; writes live-run-log.json
-  #
-  # Offline (no model — default gate):
-  #   python3 -m pytest -q
-  #   python3 examples/verify_live_story.py
-  #
-  # Optional: pytest -m live  → shells out to the live runner
-  # ─────────────────────────────────────────────────────────────
+  # Goal: exempt customers pay no tax.
+  # Check: an exempt customer with a $100 subtotal totals $100, command exits 0.
+  # Late details: a reseller certificate exempts only the home state;
+  # a marketplace order is never exempt.
 
+  Rule: The living goal collects requirements and stays visible
 
-  Rule: Live model — build add(a, b), then sidetrack to a homepage
+    Scenario: Name the goal and the check
+      Given no goal is open
+      When the user names the exempt-invoice goal and the check that must exit 0
+      Then goal show prints that goal and that check
+      And context-guard posts no chat message
 
-    Scenario: On-unit reply is quiet; homepage reply redirects once
-      Given a fresh Composer 2.5 chat from examples/run_stay_on_unit_live.py
+    Scenario: A later detail is added to the goal
+      Given the open goal is the exempt-invoice fix
+      When the user adds that a reseller certificate exempts only the home state
+      And the user adds that a marketplace order is never exempt
+      Then goal show still shows the exempt-invoice goal
+      And goal show lists the home-state rule
+      And goal show lists the marketplace rule
+      And context-guard posts no chat message
 
-      When turn 1 builds add(a, b) in examples/live_fixture/add.py
-      And the check add(2, 3) == 5 exits 0
-      Then the on-unit product follow-up is empty
+    Scenario: A question is not a new requirement
+      Given the open goal lists the home-state rule and the marketplace rule
+      When the user asks whether anything else in the folder would mislead someone about tax
+      Then the goal text is unchanged
+      And context-guard does not post "Still the goal"
 
-      When turn 2 writes examples/live_fixture/HOMEPAGE.md
-      And the assistant describes only that marketing page
-      Then one short followup is "Still the unit: … add(a, b)…"
-      And the followup does not say "no drift"
-      And the unit string is still the add unit
+    Scenario: Drop a detail
+      Given the open goal lists the marketplace rule
+      When the user says Actually drop that. The marketplace rule no longer applies
+      Then goal show no longer lists the marketplace rule
+      And context-guard posts no chat message
 
+  Rule: The loop is a check a program can fail
 
-  Rule: Offline fixture — same story without calling a model
-  # Transcript: examples/fixtures/live_chat.json
+    Scenario: No check has been recorded
+      Given the open goal includes the exempt-invoice check
+      And no check result is recorded
+      When the assistant reply is still about that invoice goal
+      Then context-guard posts one correction that the check is still open
+      And the correction quotes the living goal
+      And the correction tells the model to stay on that goal
+      # "Looks done", model confidence, and "no exception" are not checks.
 
-    Scenario: Question records only
-      Given the transcript in examples/fixtures/live_chat.json
-      When the user asks why add() does not exist yet
-      Then the product records only
-      And stop stays empty
+    Scenario: The check is red once
+      Given the open goal includes the exempt-invoice check
+      And the check ran once and exited non-zero
+      When the assistant reply is still about that invoice goal
+      Then context-guard posts one correction that quotes the failing result
+      And the correction tells the model to stay on that goal
 
-    Scenario: Naming the unit arms the pin
-      Given the transcript in examples/fixtures/live_chat.json
-      When the user sets Current unit to add(a, b) in examples/live_fixture/add.py
-      Then the unit is armed
-      And there is no chat message
+    Scenario: The same failure repeats
+      Given the open goal includes the exempt-invoice check
+      And the same failing check output has been recorded twice
+      When the assistant reply is still about that invoice goal
+      Then context-guard posts "Stop and replan. Goal still:"
+      And the living goal is unchanged
 
-    Scenario: Building on-unit stays quiet
-      Given an open unit about add(a, b)
-      When the agent writes add.py and the check passes
-      Then stop stays empty
-      And the pin still quotes add(a, b)
+    Scenario: The check passes
+      Given the open goal includes the exempt-invoice check
+      And the check exited 0
+      When the assistant reply is still about that invoice goal
+      Then context-guard stays silent
 
-    Scenario: Homepage sidetrack redirects; unit string unchanged
-      Given an open unit about add(a, b)
-      When the agent describes a marketing homepage with a signup line
-      Then one short followup is "Still the unit: … add(a, b)…"
-      And the followup does not say "no drift"
-      And the unit string is not replaced by homepage
+  Rule: Other work is a judge verdict, not an invented reply
 
-    Scenario: User amends the unit; homepage work goes quiet
-      Given an open unit about add(a, b)
-      When the user says Actually drop that. Design the homepage instead
-      Then the unit amends to the homepage
-      And a later homepage reply stays quiet
-
-
-  Rule: Limit cases
-
-    Scenario: Non-homepage sidetrack still redirects
-      Given an open unit about add(a, b)
-      When the assistant says it wrote a database migration for the billing schema instead
-      Then context-guard posts Still the unit
-
-    Scenario: Claiming you stayed on the unit does not redirect
-      Given an open unit about add(a, b)
-      When the assistant says it did not write a marketing page
-      And the open unit is still the add function
-      Then stop stays empty
+    Scenario: The judge says the reply is other work
+      Given the open goal lists the home-state rule and the marketplace rule
+      When the judge verdict on the assistant reply is off_goal
+      Then context-guard posts one "Still the goal" line
+      And that line includes the home-state rule and the marketplace rule
+      And the stored goal is unchanged

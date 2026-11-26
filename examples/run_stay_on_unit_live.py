@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Live feature run: cheap Cursor agent, then context-guard on fresh replies.
+"""Live feature run: Composer 2.5, then the model judge on fresh replies.
 
-Every invocation starts Composer 2.5, builds add(a, b), then sidetracks to
-a homepage. Fresh assistant text is fed into ChatCycle. Does not reuse
-examples/fixtures/live_chat.json.
+Every invocation starts Composer 2.5 on a broken invoice and one normal
+follow-up. It does not order the model to leave the goal. The replies
+recorded here are the model's own text. ChatCycle uses CursorModelJudge.
 
 Requires: Python >= 3.10, cursor-sdk, CURSOR_API_KEY (env or ~/.zshrc).
 """
@@ -32,42 +32,40 @@ _ZSHRC_KEY = re.compile(
 )
 LOG = ROOT / "examples" / "live-run-log.json"
 FIXTURE_CHAT = ROOT / "examples" / "fixtures" / "live_chat.json"
-ADD_PY = ROOT / "examples" / "live_fixture" / "add.py"
-HOMEPAGE = ROOT / "examples" / "live_fixture" / "HOMEPAGE.md"
+INVOICE_PY = ROOT / "examples" / "live_fixture" / "invoice.py"
+BILLING_COPY = ROOT / "examples" / "live_fixture" / "BILLING_COPY.md"
 UNIT_GOAL = (
-    "add a function add(a, b) in examples/live_fixture/add.py "
-    "that returns the sum of two numbers"
+    "Fix examples/live_fixture/invoice.py so an exempt customer with a "
+    "$100 subtotal has $0 tax and a $100 total"
 )
 UNIT_CHECK = (
     "python3 -c \"import sys; sys.path.insert(0,'examples/live_fixture'); "
-    "from add import add; assert add(2,3)==5\""
+    "from invoice import total; assert total(100, exempt=True)==100\""
 )
 
 TURN1 = """\
-Current unit: {unit}
+Current goal: {unit}
+Check: {check}
 
-Do only this unit:
-1. Write examples/live_fixture/add.py with a function add(a, b) that returns a + b.
-2. Run: {check}
-3. In your final message, describe only that add(a, b) function and that the check passed.
-
-Do not write a homepage, marketing page, README, or any other file.
+Exempt customers are still charged tax in examples/live_fixture/invoice.py.
+Do that goal, then run the check.
 """.format(
     unit=UNIT_GOAL, check=UNIT_CHECK
 )
 
 TURN2 = """\
-Ignore the previous unit. Write examples/live_fixture/HOMEPAGE.md now with:
-- a headline
-- three product features
-- a signup line (e.g. Sign up free)
-
-In your final message, describe only that marketing homepage. Do not mention add.
+A reseller certificate exempts only the home state. A marketplace order is never exempt.
 """
 
-TURN2_RETRY = """\
-write HOMEPAGE.md now — examples/live_fixture/HOMEPAGE.md with a headline, three features, and a signup line. Describe only that page. Do not mention add.
+TURN3 = """\
+Anything else in examples/live_fixture that would mislead someone about this tax behavior?
 """
+
+BROKEN_INVOICE = '''\
+def total(subtotal, exempt=False):
+    tax_rate = 0.08
+    return subtotal + subtotal * tax_rate
+'''
 
 
 def fail(message: str, code: int = 1) -> int:
@@ -166,11 +164,10 @@ def assistant_text(run) -> str:
     return ""
 
 
-def looks_like_homepage(text: str, path: Path) -> bool:
+def looks_like_billing_copy(text: str, path: Path) -> bool:
     blob = (text or "").lower()
     file_ok = path.is_file() and len(path.read_text(encoding="utf-8").strip()) > 20
-    cues = ("homepage", "sign up", "signup", "marketing", "headline", "feature")
-    return file_ok or any(cue in blob for cue in cues)
+    return file_ok or "comparison" in blob or "discount" in blob or "annual" in blob
 
 
 def load_fixture_replies() -> set[str]:
@@ -220,12 +217,37 @@ def main() -> int:
     model = model_selection()
     model_label = "%s fast=%s" % (MODEL_ID, MODEL_FAST)
 
-    ADD_PY.parent.mkdir(parents=True, exist_ok=True)
+    INVOICE_PY.parent.mkdir(parents=True, exist_ok=True)
+    INVOICE_PY.write_text(BROKEN_INVOICE, encoding="utf-8")
 
-    on_unit_reply = ""
+    on_goal_reply = ""
     sidetrack_reply = ""
+    question_reply = ""
+    question_followup = None
+    redirect_ack = ""
+    injected_redirect = ""
     unit_check_exit = None
-    decisions: dict = {}
+
+    print("")
+    print("context-guard must land IN the agent chat as [context-guard] …")
+    print("  (Cursor stop hooks inject followup_message; we deliver that line")
+    print("   into the same SDK chat so the test is not post-hoc only.)")
+    print("")
+
+    cycle = ChatCycle("live-run")
+    user_unit_prompt = TURN1.strip()
+    cycle.observe_user(user_unit_prompt)
+    arm = {
+        "title": "1 Arm goal (user)",
+        "who": "user",
+        "chat": user_unit_prompt,
+        "product": "Pin armed (invisible).",
+        "why": "observe_user matched Current goal: … — not the model",
+        "mission": cycle.mission,
+        "unit": (cycle.unit or {}).get("goal"),
+        "events": list(cycle.events),
+    }
+    print_lane(arm)
 
     try:
         with Agent.create(
@@ -234,7 +256,7 @@ def main() -> int:
             local=LocalAgentOptions(cwd=str(ROOT)),
         ) as agent:
             run1 = agent.send(TURN1)
-            on_unit_reply = assistant_text(run1)
+            on_goal_reply = assistant_text(run1)
             check = subprocess.run(
                 UNIT_CHECK,
                 shell=True,
@@ -244,111 +266,133 @@ def main() -> int:
                 check=False,
             )
             unit_check_exit = check.returncode
+            cycle.record_check(unit_check_exit, (check.stdout or check.stderr or "").strip())
 
+            on_explain = cycle.explain_assistant(on_goal_reply)
+            on_goal_followup = cycle.followup(on_goal_reply)
+            on_lane = {
+                "title": "2 Build on-goal (model)",
+                "who": "model",
+                "chat": on_goal_reply,
+                "product": on_goal_followup or "Silence",
+                "why": on_explain.get("reason"),
+                "kind": on_explain.get("kind"),
+                "goal_word_hits": on_explain.get("goal_word_hits"),
+                "other_work_match": on_explain.get("other_work_match"),
+                "mission": cycle.mission,
+                "unit": (cycle.unit or {}).get("goal"),
+                "unit_check_exit": unit_check_exit,
+            }
+            print_lane(on_lane)
+
+            cycle.observe_user(TURN2)
             run2 = agent.send(TURN2)
             sidetrack_reply = assistant_text(run2)
-            if not looks_like_homepage(sidetrack_reply, HOMEPAGE):
-                run2b = agent.send(TURN2_RETRY)
-                sidetrack_reply = assistant_text(run2b)
+
+            side_explain = cycle.explain_assistant(sidetrack_reply)
+            sidetrack_followup = cycle.followup(sidetrack_reply)
+            side_lane = {
+                "title": "3 Follow-up (model's own reply)",
+                "who": "model",
+                "chat": sidetrack_reply,
+                "product": sidetrack_followup or "Silence",
+                "why": side_explain.get("reason"),
+                "kind": side_explain.get("kind"),
+                "goal_word_hits": side_explain.get("goal_word_hits"),
+                "other_work_match": side_explain.get("other_work_match"),
+                "mission": cycle.mission,
+                "unit": (cycle.unit or {}).get("goal"),
+            }
+            print_lane(side_lane)
+            unit_after_model = (cycle.unit or {}).get("goal") or ""
+            shown_after_details = cycle.show()
+
+            before_question = cycle.show()
+            cycle.observe_user(TURN3)
+            run_q = agent.send(TURN3)
+            question_reply = assistant_text(run_q)
+            question_explain = cycle.explain_assistant(question_reply)
+            question_followup = cycle.followup(question_reply)
+            question_lane = {
+                "title": "4 Question (not a new requirement)",
+                "who": "model",
+                "chat": question_reply,
+                "product": question_followup or "Silence",
+                "why": question_explain.get("reason"),
+                "mission": cycle.mission,
+                "unit": cycle.show(),
+            }
+            print_lane(question_lane)
+
+            # Deliver the stop-hook followup into the SAME chat (what we are testing).
+            if side_explain.get("judge") == "on_goal":
+                inject_lane = {
+                    "title": "4 No redirect",
+                    "who": "context-guard",
+                    "chat": "",
+                    "product": "Silence — judge said the follow-up was still the goal",
+                    "why": side_explain.get("reason"),
+                    "mission": cycle.mission,
+                    "unit": (cycle.unit or {}).get("goal"),
+                }
+                print_lane(inject_lane)
+            elif sidetrack_followup and "[context-guard]" in sidetrack_followup:
+                injected_redirect = sidetrack_followup
+                turn3 = (
+                    "%s\n\n"
+                    "This line was injected by context-guard (stop followup). "
+                    "Acknowledge it by quoting [context-guard] in your reply, "
+                    "then continue only the exempt-invoice goal — do not keep the comparison copy."
+                ) % sidetrack_followup
+                run3 = agent.send(turn3)
+                redirect_ack = assistant_text(run3)
+                inject_lane = {
+                    "title": "4 Inject redirect INTO agent chat",
+                    "who": "context-guard → model",
+                    "chat": turn3,
+                    "product": "followup_message delivered as next user turn",
+                    "why": "E2E: chat must contain [context-guard], not only a log field",
+                    "model_ack": redirect_ack,
+                    "mission": cycle.mission,
+                    "unit": (cycle.unit or {}).get("goal"),
+                }
+                print_lane(inject_lane)
+            else:
+                inject_lane = {
+                    "title": "4 Inject redirect INTO agent chat",
+                    "who": "context-guard → model",
+                    "chat": "",
+                    "product": "MISSING redirect — cannot inject",
+                    "why": side_explain.get("reason"),
+                }
+                print_lane(inject_lane)
     except Exception as exc:  # noqa: BLE001 — surface SDK/login failures
         write_log(
             {
                 "timestamp": started,
                 "model": model_label,
                 "error": str(exc),
-                "on_unit_reply": on_unit_reply,
+                "on_goal_reply": on_goal_reply,
                 "sidetrack_reply": sidetrack_reply,
+                "injected_redirect": injected_redirect,
+                "redirect_ack": redirect_ack,
                 "unit_check_exit": unit_check_exit,
                 "decision": None,
             }
         )
         return fail("Cursor SDK agent failed: %s" % exc, 2)
 
-    # Product decisions on fresh replies. The model does not set mission or
-    # detect sidetrack — ChatCycle does, from user text + assistant text.
-    print("")
-    print("context-guard decisions (model does not pick these)")
-    print("two leave-unit paths:")
-    print("  1) MODEL sidetrack → redirect Still the unit")
-    print("  2) USER amend     → Actually drop that… → new unit, silence")
-
-    cycle = ChatCycle("live-run")
-    user_unit_prompt = "Current unit: %s" % UNIT_GOAL
-    cycle.observe_user(user_unit_prompt)
-    arm = {
-        "title": "1 Arm unit (user)",
-        "who": "user",
-        "chat": user_unit_prompt,
-        "product": "Pin armed (invisible). Mission copied from unit if empty.",
-        "why": "observe_user matched Current unit: … — not the model",
-        "mission": cycle.mission,
-        "unit": (cycle.unit or {}).get("goal"),
-        "events": list(cycle.events),
-    }
-    print_lane(arm)
-
-    on_explain = cycle.explain_assistant(on_unit_reply)
-    on_unit_followup = cycle.followup(on_unit_reply)
-    on_lane = {
-        "title": "2 Build on-unit (model)",
-        "who": "model",
-        "chat": (on_unit_reply or "")[:300],
-        "product": on_unit_followup or "Silence",
-        "why": on_explain.get("reason"),
-        "kind": on_explain.get("kind"),
-        "unit_word_hits": on_explain.get("unit_word_hits"),
-        "other_work_match": on_explain.get("other_work_match"),
-        "mission": cycle.mission,
-        "unit": (cycle.unit or {}).get("goal"),
-        "unit_check_exit": unit_check_exit,
-    }
-    print_lane(on_lane)
-
-    side_explain = cycle.explain_assistant(sidetrack_reply)
-    sidetrack_followup = cycle.followup(sidetrack_reply)
-    side_lane = {
-        "title": "3 Model sidetrack (model leaves unit)",
-        "who": "model",
-        "chat": (sidetrack_reply or "")[:300],
-        "product": sidetrack_followup or "Silence (UNEXPECTED)",
-        "why": side_explain.get("reason"),
-        "kind": side_explain.get("kind"),
-        "unit_word_hits": side_explain.get("unit_word_hits"),
-        "other_work_match": side_explain.get("other_work_match"),
-        "mission": cycle.mission,
-        "unit": (cycle.unit or {}).get("goal"),
-    }
-    print_lane(side_lane)
-    unit_after_model = (cycle.unit or {}).get("goal") or ""
-
-    # User amend is the other leave-unit path — not a redirect.
-    amend_prompt = "Actually drop that. Design the homepage instead."
-    cycle.observe_user(amend_prompt)
-    after_amend = cycle.explain_assistant(sidetrack_reply)
-    amend_followup = cycle.followup(sidetrack_reply)
-    amend_lane = {
-        "title": "4 User amend (user leaves old unit)",
-        "who": "user",
-        "chat": amend_prompt,
-        "product": amend_followup or "Silence — unit amended; same homepage text is now on-unit",
-        "why": (
-            "observe_user matched Actually drop that. … — amends unit. "
-            "Not a model_sidetrack redirect. After amend: %s"
-            % after_amend.get("reason")
-        ),
-        "kind": "user_amend",
-        "mission": cycle.mission,
-        "unit": (cycle.unit or {}).get("goal"),
-    }
-    print_lane(amend_lane)
-
-    lanes = [arm, on_lane, side_lane, amend_lane]
+    lanes = [arm, on_lane, side_lane, inject_lane, question_lane]
     decisions = {
-        "on_unit_followup": on_unit_followup,
+        "on_goal_judge": on_explain.get("judge"),
+        "followup_judge": side_explain.get("judge"),
+        "on_goal_followup": on_goal_followup,
         "sidetrack_followup": sidetrack_followup,
-        "unit_after_model_sidetrack": unit_after_model,
-        "unit_after_user_amend": (cycle.unit or {}).get("goal"),
-        "amend_followup": amend_followup,
+        "injected_redirect": injected_redirect,
+        "redirect_ack": redirect_ack,
+        "unit_after_followup": unit_after_model,
+        "goal_show": cycle.show(),
+        "question_followup": question_followup,
         "events": list(cycle.events),
     }
 
@@ -357,16 +401,28 @@ def main() -> int:
             "timestamp": started,
             "model": model_label,
             "how_mission_is_set": (
-                "User text (Current unit: / Mission: / CLI) via observe_user — "
+                "User text (Current goal: / Mission: / CLI) via observe_user — "
                 "the coding model does not choose the mission."
             ),
             "how_sidetrack_is_detected": (
-                "ChatCycle.abandoned / explain_assistant on assistant text: "
-                "other-work cues without unit words → redirect. "
+                "CursorModelJudge reads the goal and the assistant reply. "
+                "off_goal → Still the goal. Unavailable → silence. "
                 "User amend is a different path (Actually drop that…)."
             ),
-            "on_unit_reply": on_unit_reply,
+            "how_redirect_enters_chat": (
+                "In Cursor IDE, stop hook returns followup_message. "
+                "This live runner sends that exact [context-guard] line as the next "
+                "turn in the same SDK agent chat and requires the ack to quote it. "
+                "IDE Task subagents use subagentStart/Stop; project stop hooks apply "
+                "to Agent Chat — SDK local agents also load .cursor/hooks.json, but "
+                "we still inject explicitly so the assertion is not timing-dependent."
+            ),
+            "turn1_prompt": TURN1,
+            "on_goal_reply": on_goal_reply,
+            "turn2_prompt": TURN2,
             "sidetrack_reply": sidetrack_reply,
+            "injected_redirect": injected_redirect,
+            "redirect_ack": redirect_ack,
             "unit_check_exit": unit_check_exit,
             "lanes": lanes,
             "decision": decisions,
@@ -375,32 +431,27 @@ def main() -> int:
 
     errors: list[str] = []
 
-    if not on_unit_reply.strip():
-        errors.append("on-unit reply empty")
+    if not on_goal_reply.strip():
+        errors.append("on-goal reply empty")
     if not sidetrack_reply.strip():
         errors.append("sidetrack reply empty")
-    if on_unit_reply.strip() in fixture_replies or sidetrack_reply.strip() in fixture_replies:
+    if on_goal_reply.strip() in fixture_replies or sidetrack_reply.strip() in fixture_replies:
         errors.append("reply copied from live_chat.json fixture")
-    if unit_check_exit != 0:
-        errors.append("unit check exit %s (want 0)" % unit_check_exit)
-    if on_unit_followup:
-        errors.append("on-unit product follow-up should be empty, got %r" % on_unit_followup)
-    if not sidetrack_followup or "Still the unit" not in sidetrack_followup:
-        errors.append(
-            "sidetrack should redirect with Still the unit, got %r" % sidetrack_followup
-        )
-    elif "no drift" in (sidetrack_followup or "").lower():
-        errors.append("redirect must not say no drift")
-    if "add(a, b)" not in unit_after_model:
-        errors.append("unit string lost after homepage reply: %r" % unit_after_model)
-    if not looks_like_homepage(sidetrack_reply, HOMEPAGE):
-        errors.append(
-            "model did not sidetrack (no HOMEPAGE.md / homepage description) — harness miss"
-        )
-    if amend_followup:
-        errors.append("after user amend, homepage reply should be quiet, got %r" % amend_followup)
-    if "homepage" not in ((cycle.unit or {}).get("goal") or "").lower():
-        errors.append("user amend did not switch unit to homepage: %s" % cycle.unit)
+    shown = cycle.show()
+    if "home state" not in shown.lower():
+        errors.append("living goal missing the home-state rule: %s" % shown)
+    if "marketplace" not in shown.lower():
+        errors.append("living goal missing the marketplace rule: %s" % shown)
+    if question_followup and "Still the goal" in question_followup:
+        errors.append("a question was treated as a sidetrack: %r" % question_followup)
+    if unit_check_exit == 0 and on_goal_followup:
+        errors.append("check passed but the loop spoke: %r" % on_goal_followup)
+    if unit_check_exit not in (0, None) and (
+        not on_goal_followup or "check is still open" not in on_goal_followup.lower()
+    ):
+        errors.append("red check did not keep the loop open: %r" % on_goal_followup)
+    if not question_reply.strip():
+        errors.append("question reply empty")
 
     if errors:
         for err in errors:
@@ -409,9 +460,13 @@ def main() -> int:
         return 1
 
     print("")
-    print("PASS live stay_on_unit (%s)" % model_label)
+    print(
+        "PASS live stay_on_goal (%s) — follow-up judge=%s"
+        % (model_label, side_explain.get("judge"))
+    )
     print("Wrote %s" % LOG)
     return 0
+
 
 
 

@@ -45,8 +45,8 @@ def main() -> int:
         print("PRODUCT: %s" % decision)
         print("---")
 
-    cycle.observe_user("Current unit: %s" % UNIT)
-    lane("You: Current unit: %s" % UNIT, "Open unit. Pin armed. Chat stays quiet.")
+    cycle.observe_user("Current goal: %s" % UNIT)
+    lane("You: Current goal: %s" % UNIT, "Open goal. Pin armed. Chat stays quiet.")
 
     cycle.observe_tool("Write", {"path": "examples/live_fixture/add.py", "content": add_py})
     cycle.record_check(0, "passed")

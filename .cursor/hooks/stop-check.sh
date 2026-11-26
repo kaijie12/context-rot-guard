@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# stop hook: run the unit oracle when the agent stops.
+# stop hook: run the goal oracle when the agent stops.
 # Adapted from sample-harness-project, pointed at pytest instead of pnpm typecheck.
 # Exit 0 = allow stop (pytest passed, or pytest is not installed → skip).
 # Exit 1 = block stop (pytest ran and failed — fix and continue).

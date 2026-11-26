@@ -84,6 +84,8 @@ def test_cli_pulse_ensure_and_hook_script(tmp_path: Path) -> None:
     env = dict(**{key: value for key, value in __import__("os").environ.items()})
     env["PYTHONPATH"] = str(ROOT / "src")
     env["CONTEXT_ROT_SESSION"] = str(session)
+    # Stop/pulse hooks resolve chat state under CONTEXT_GUARD_ROOT; keep them off live chats.
+    env["CONTEXT_GUARD_ROOT"] = str(tmp_path)
     base = [sys.executable, "-m", "context_guard", "--session", str(session)]
 
     one = subprocess.run(

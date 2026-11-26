@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from context_guard.cycle import ChatCycle, chat_path, handle_hook
+from tests.judge_doubles import FIXTURE_JUDGE
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "examples" / "fixtures" / "live_chat.json"
@@ -43,13 +44,13 @@ def test_live_chat_story(tmp_path: Path) -> None:
             cycle = ChatCycle.load(chat_path(tmp_path, cid), cid)
             assert cycle.unit is not None
             assert "add(a, b)" in cycle.unit["goal"]
-            assert cycle.phase == "unit"
+            assert cycle.phase == "goal"
         for hook in turn.get("hooks") or []:
             if turn.get("check") and hook["event"] == "afterAgentResponse":
                 cycle = ChatCycle.load(chat_path(tmp_path, cid), cid)
                 cycle.record_check(int(turn["check"]["exit_code"]), turn["check"].get("output") or "")
                 cycle.save(chat_path(tmp_path, cid))
-            out = handle_hook(hook["event"], hook["payload"], tmp_path)
+            out = handle_hook(hook["event"], hook["payload"], tmp_path, judge=FIXTURE_JUDGE)
             if hook["event"] == "postToolUse" and turn["id"] == "build":
                 pin = out.get("additional_context") or ""
                 assert "add(a, b)" in pin
@@ -65,7 +66,12 @@ def test_live_chat_story(tmp_path: Path) -> None:
                     assert expect["unit_contains"] in cycle.unit["goal"]
                     assert expect["unit_forbids"] not in cycle.unit["goal"].lower()
                 elif expect.get("stop") == {}:
-                    assert out == {}
+                    note = out.get("followup_message") or ""
+                    if note:
+                        assert "check is still open" in note.lower()
+                        assert "Still the goal" not in note
+                    else:
+                        assert out == {}
         if turn["id"] == "amend":
             cycle = ChatCycle.load(chat_path(tmp_path, cid), cid)
             assert cycle.unit is not None
@@ -74,18 +80,19 @@ def test_live_chat_story(tmp_path: Path) -> None:
 
 def test_migration_sidetrack_and_false_redirect() -> None:
     limits = _fixture()["limits"]
-    cycle = ChatCycle("lim")
+    cycle = ChatCycle("lim", judge=FIXTURE_JUDGE)
     cycle.start_unit("add a function add(a, b) that returns the sum of two numbers")
     note = cycle.followup(limits["migration_sidetrack"])
-    assert note is not None and "Still the unit" in note
-    assert cycle.followup(limits["stayed_on_unit"]) is None
+    assert note is not None and "Still the goal" in note
+    cycle.record_check(0, "passed")
+    assert cycle.followup(limits["stayed_on_goal"]) is None
 
 
 def test_before_submit_prompt_hook_script_arms_unit(tmp_path: Path) -> None:
     env = {**dict(**__import__("os").environ), "PYTHONPATH": str(ROOT / "src")}
     payload = {
         "conversation_id": "hook-arm",
-        "prompt": "Current unit: wire prompt ingest from the hook",
+        "prompt": "Current goal: wire prompt ingest from the hook",
     }
     # Isolate sidecar under tmp by using --root via python module (script uses repo root).
     # Call the library path the script wraps:

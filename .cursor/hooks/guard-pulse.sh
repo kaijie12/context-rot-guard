@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# stop: follow up only when the open unit was abandoned or the loop says escalate.
+# stop: follow up only when the open goal was abandoned or the loop says escalate.
 set -u
 PKG="$(cd "$(dirname "$0")/../.." && pwd)"
 ROOT="${CONTEXT_GUARD_ROOT:-$PKG}"

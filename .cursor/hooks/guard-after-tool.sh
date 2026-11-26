@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# postToolUse: invisible pin of mission + current unit. No user-visible follow-up.
+# postToolUse: invisible pin of mission + current goal. No user-visible follow-up.
 set -u
 PKG="$(cd "$(dirname "$0")/../.." && pwd)"
 ROOT="${CONTEXT_GUARD_ROOT:-$PKG}"

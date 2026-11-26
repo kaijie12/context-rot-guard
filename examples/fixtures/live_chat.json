@@ -39,19 +39,19 @@
     },
     {
       "id": "u1",
-      "chat": "You: Current unit: add a function add(a, b) in examples/live_fixture/add.py that returns the sum of two numbers.",
+      "chat": "You: Current goal: add a function add(a, b) in examples/live_fixture/add.py that returns the sum of two numbers.",
       "hook": {
         "event": "beforeSubmitPrompt",
         "payload": {
           "conversation_id": "live-build",
-          "prompt": "Current unit: add a function add(a, b) in examples/live_fixture/add.py that returns the sum of two numbers."
+          "prompt": "Current goal: add a function add(a, b) in examples/live_fixture/add.py that returns the sum of two numbers."
         }
       },
       "expect": {
-        "phase": "unit",
+        "phase": "goal",
         "unit_contains": "add(a, b)",
         "followup": null,
-        "product": "Open unit. Pin armed. Chat stays quiet."
+        "product": "Open goal. Pin armed. Chat stays quiet."
       }
     },
     {
@@ -120,11 +120,11 @@
         }
       ],
       "expect": {
-        "followup_contains": ["Still the unit:", "add(a, b)", "Continue only that"],
+        "followup_contains": ["Still the goal:", "add(a, b)", "Continue only that"],
         "followup_forbids": ["no drift"],
         "unit_contains": "add(a, b)",
         "unit_forbids": "homepage",
-        "product": "[context-guard] Still the unit: add a function add(a, b) in examples/live_fixture/add.py that returns the sum of two numbers. Continue only that."
+        "product": "[context-guard] Still the goal: add a function add(a, b) in examples/live_fixture/add.py that returns the sum of two numbers. Continue only that."
       }
     },
     {
@@ -169,7 +169,7 @@
   ],
   "limits": {
     "migration_sidetrack": "I wrote a database migration for the billing schema instead.",
-    "stayed_on_unit": "I did not write a marketing page. The open unit is still the add function in add.py.",
+    "stayed_on_goal": "I did not write a marketing page. The open goal is still the add function in add.py.",
     "mission_only_prompt": "Mission: look at the login bug"
   }
 }

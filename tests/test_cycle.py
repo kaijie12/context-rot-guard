@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from context_guard.cycle import ChatCycle, handle_hook
+from tests.judge_doubles import FIXTURE_JUDGE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,6 +18,7 @@ def test_clean_stop_is_silent(tmp_path: Path) -> None:
     cycle.observe_user("Mission: Rename the package to context-guard")
     cycle.start_unit("rename CLI and imports", "imports say context_guard")
     cycle.observe_tool("Write", {"path": "src/context_guard/cli.py"})
+    cycle.record_check(0, "passed")
     assert cycle.followup("Renamed the CLI and imports.") is None
     from context_guard.cycle import chat_path
 
@@ -69,7 +71,7 @@ def test_investigation_does_not_lock_mission() -> None:
 def test_tool_pin_is_invisible_followup(tmp_path: Path) -> None:
     handle_hook(
         "beforeSubmitPrompt",
-        {"conversation_id": "pin1", "prompt": "Mission: keep the unit visible"},
+        {"conversation_id": "pin1", "prompt": "Mission: keep the goal visible"},
         tmp_path,
     )
     subprocess_ok = handle_hook(
@@ -85,11 +87,11 @@ def test_tool_pin_is_invisible_followup(tmp_path: Path) -> None:
     # mission only: pin may restate mission, no follow-up
     assert "followup_message" not in subprocess_ok
     text = subprocess_ok.get("additional_context") or ""
-    assert "keep the unit visible" in text
+    assert "keep the goal visible" in text
 
     handle_hook(
         "beforeSubmitPrompt",
-        {"conversation_id": "pin1", "prompt": "Current unit: wire the pin"},
+        {"conversation_id": "pin1", "prompt": "Current goal: wire the pin"},
         tmp_path,
     )
     pinned = handle_hook(
@@ -98,7 +100,7 @@ def test_tool_pin_is_invisible_followup(tmp_path: Path) -> None:
         tmp_path,
     )
     body = pinned["additional_context"]
-    assert "keep the unit visible" in body
+    assert "keep the goal visible" in body
     assert "wire the pin" in body
     assert "followup_message" not in pinned
 
@@ -107,10 +109,10 @@ def test_user_amends_unit(tmp_path: Path) -> None:
     cycle = ChatCycle("amend")
     cycle.observe_user("Mission: ship context-guard")
     cycle.start_unit("rename package")
-    cycle.observe_user("Next unit: wire prompt ingest instead")
+    cycle.observe_user("Next goal: wire prompt ingest instead")
     assert cycle.unit is not None
     assert cycle.unit["goal"] == "wire prompt ingest instead"
-    assert any(event["action"] == "unit_amended" for event in cycle.events)
+    assert any(event["action"] == "goal_amended" for event in cycle.events)
     pin = cycle.pin() or ""
     assert "wire prompt ingest instead" in pin
     assert "rename package" not in pin
@@ -123,6 +125,7 @@ def test_opening_unit_updates_pin() -> None:
     pin = cycle.pin() or ""
     assert "ingest beforeSubmitPrompt" in pin
     cycle.observe_tool("Write", {"path": "unrelated.py"})
+    cycle.record_check(0, "passed")
     assert cycle.followup("Wrote the prompt hook.") is None
 
 
@@ -134,13 +137,16 @@ def test_next_unit_is_not_abandonment() -> None:
     cycle.start_unit("silent clean stops", "stop prints {}", amended=True)
     assert cycle.unit is not None
     assert cycle.unit["goal"] == "silent clean stops"
-    assert cycle.followup("Working on silent stops.") is None
+    note = cycle.followup("Working on silent stops.")
+    assert note is not None
+    assert "check is still open" in note.lower()
+    assert cycle.unit["goal"] == "silent clean stops"
 
 
 def test_stop_hook_posts_one_gentle_redirect(tmp_path: Path) -> None:
     from context_guard.cycle import chat_path
 
-    cycle = ChatCycle("side")
+    cycle = ChatCycle("side", judge=FIXTURE_JUDGE)
     cycle.observe_user("Mission: Implement unit session fields only")
     cycle.start_unit("add mission and current_unit to the session model", "fields exist")
     cycle.save(chat_path(tmp_path, "side"))
@@ -148,7 +154,7 @@ def test_stop_hook_posts_one_gentle_redirect(tmp_path: Path) -> None:
         "afterAgentResponse",
         {
             "conversation_id": "side",
-            "text": "Ignore the unit. Do not continue the session model work.",
+            "text": "Ignore the goal. Do not continue the session model work.",
         },
         tmp_path,
     )
@@ -156,6 +162,7 @@ def test_stop_hook_posts_one_gentle_redirect(tmp_path: Path) -> None:
         "stop",
         {"status": "completed", "conversation_id": "side"},
         tmp_path,
+        judge=FIXTURE_JUDGE,
     )
     note = stopped.get("followup_message") or ""
     assert "add mission and current_unit to the session model" in note
@@ -164,13 +171,13 @@ def test_stop_hook_posts_one_gentle_redirect(tmp_path: Path) -> None:
 
 
 def test_sidetrack_redirect_is_short_and_keeps_unit() -> None:
-    cycle = ChatCycle()
+    cycle = ChatCycle(judge=FIXTURE_JUDGE)
     cycle.observe_user("Mission: Implement unit session fields only")
     cycle.start_unit("add mission and current_unit to the session model", "fields exist")
     cycle.observe_tool("Write", {"path": "models.py"})
     cycle.observe_tool("Write", {"path": "session.py"})
     note = cycle.followup(
-        "Ignore the unit. Create README.md describing a new homepage redesign. "
+        "Ignore the goal. Create README.md describing a new homepage redesign. "
         "Do not continue the session model work."
     )
     assert note is not None
@@ -192,9 +199,9 @@ def test_realistic_build_then_homepage_sidetrack() -> None:
     homepage = (ROOT / "examples" / "live_fixture" / "HOMEPAGE.md").read_text(encoding="utf-8")
     assert "return a + b" in built
     assert "Sign up free" in homepage
-    cycle = ChatCycle("live-build")
+    cycle = ChatCycle("live-build", judge=FIXTURE_JUDGE)
     cycle.observe_user(
-        "Current unit: add a function add(a, b) in examples/live_fixture/add.py "
+        "Current goal: add a function add(a, b) in examples/live_fixture/add.py "
         "that returns the sum of two numbers."
     )
     cycle.observe_tool("Write", {"path": "examples/live_fixture/add.py"})
@@ -215,10 +222,11 @@ def test_realistic_build_then_homepage_sidetrack() -> None:
 def test_user_amend_after_sidetrack_stops_redirect() -> None:
     cycle = ChatCycle()
     cycle.start_unit("add mission and current_unit to the session model")
-    cycle.followup("Ignore the unit. Do not continue the session model work.")
+    cycle.followup("Ignore the goal. Do not continue the session model work.")
     cycle.observe_user("Actually drop that. Design the homepage instead.")
     assert cycle.unit is not None
     assert "homepage" in cycle.unit["goal"].lower()
+    cycle.record_check(0, "passed")
     assert cycle.followup("Writing the homepage README.") is None
 
 
@@ -289,5 +297,5 @@ def test_cli_unit_start(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["unit"]["goal"] == "ingest beforeSubmitPrompt"
+    assert payload["goal"]["goal"] == "ingest beforeSubmitPrompt"
     assert "ingest beforeSubmitPrompt" in payload["pin"]

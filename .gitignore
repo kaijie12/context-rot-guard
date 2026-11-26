@@ -14,6 +14,14 @@ dist/
 secrets/
 examples/live-run-log.json
 examples/live-build-log.json
+examples/live-recover-log.json
+examples/live-recover-grade.json
+examples/live-aaa-goal-summary.json
+examples/live-summary-diff.json
 examples/feature-story-log.json
 examples/product-walkthrough.json
+examples/LAST_LIVE_TRANSCRIPT.md
+examples/LAST_RECOVER_TRANSCRIPT.md
+examples/LAST_RECOVER_GRADE.md
+examples/LAST_SUMMARY_DIFF.md
 
