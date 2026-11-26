@@ -1,6 +1,30 @@
 {
   "version": 1,
   "hooks": {
+    "sessionStart": [
+      {
+        "command": ".cursor/hooks/guard-session-start.sh",
+        "timeout": 15
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": ".cursor/hooks/guard-before-prompt.sh",
+        "timeout": 15
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": ".cursor/hooks/guard-after-response.sh",
+        "timeout": 15
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": ".cursor/hooks/guard-after-tool.sh",
+        "timeout": 15
+      }
+    ],
     "beforeShellExecution": [
       {
         "command": "node .cursor/hooks/deny-shell.js",
@@ -18,6 +42,11 @@
         "command": ".cursor/hooks/stop-check.sh",
         "timeout": 120,
         "loop_limit": 2
+      },
+      {
+        "command": ".cursor/hooks/guard-pulse.sh",
+        "timeout": 20,
+        "loop_limit": 1
       }
     ]
   }

@@ -1,0 +1,175 @@
+{
+  "conversation_id": "live-build",
+  "unit_check": {
+    "command": "python3 -c \"import sys; sys.path.insert(0,'examples/live_fixture'); from add import add; assert add(2,3)==5\"",
+    "cwd": "."
+  },
+  "files": {
+    "add_py": "examples/live_fixture/add.py",
+    "homepage": "examples/live_fixture/HOMEPAGE.md"
+  },
+  "sidecar_blind": {
+    "conversation_id": "29ae9587-f098-4adc-92a5-a2feed8c54c2",
+    "phase": "investigate",
+    "mission": null,
+    "unit": null,
+    "checks": [],
+    "events": [],
+    "prompts": [],
+    "last_assistant": ""
+  },
+  "turns": [
+    {
+      "id": "q1",
+      "chat": "You: Why does add() not exist yet?",
+      "hook": {
+        "event": "beforeSubmitPrompt",
+        "payload": {
+          "conversation_id": "live-build",
+          "prompt": "Why does add() not exist yet?"
+        }
+      },
+      "expect": {
+        "phase": "investigate",
+        "mission": null,
+        "unit": null,
+        "stop": {},
+        "product": "Record only. No mission. Silence."
+      }
+    },
+    {
+      "id": "u1",
+      "chat": "You: Current goal: add a function add(a, b) in examples/live_fixture/add.py that returns the sum of two numbers.",
+      "hook": {
+        "event": "beforeSubmitPrompt",
+        "payload": {
+          "conversation_id": "live-build",
+          "prompt": "Current goal: add a function add(a, b) in examples/live_fixture/add.py that returns the sum of two numbers."
+        }
+      },
+      "expect": {
+        "phase": "goal",
+        "unit_contains": "add(a, b)",
+        "followup": null,
+        "product": "Open goal. Pin armed. Chat stays quiet."
+      }
+    },
+    {
+      "id": "build",
+      "chat": "Agent: wrote add.py, check passed. The check passed. add(a, b) returns the sum of two numbers.",
+      "hooks": [
+        {
+          "event": "postToolUse",
+          "payload": {
+            "conversation_id": "live-build",
+            "tool_name": "Write",
+            "tool_input": {
+              "path": "examples/live_fixture/add.py"
+            }
+          }
+        },
+        {
+          "event": "afterAgentResponse",
+          "payload": {
+            "conversation_id": "live-build",
+            "text": "The check passed. add(a, b) returns the sum of two numbers."
+          }
+        },
+        {
+          "event": "stop",
+          "payload": {
+            "conversation_id": "live-build",
+            "status": "completed"
+          }
+        }
+      ],
+      "check": {"exit_code": 0, "output": "passed"},
+      "expect": {
+        "stop": {},
+        "pin_contains": "add(a, b)",
+        "product": "Quiet stop."
+      }
+    },
+    {
+      "id": "side",
+      "chat": "Agent: The homepage is a short marketing page for a note-taking app. It opens with a headline about keeping every note where you left it, lists three features (quick capture and search, notebooks, and sync across devices), and ends with a free signup line.",
+      "hooks": [
+        {
+          "event": "postToolUse",
+          "payload": {
+            "conversation_id": "live-build",
+            "tool_name": "Write",
+            "tool_input": {
+              "path": "examples/live_fixture/HOMEPAGE.md"
+            }
+          }
+        },
+        {
+          "event": "afterAgentResponse",
+          "payload": {
+            "conversation_id": "live-build",
+            "text": "The homepage is a short marketing page for a note-taking app. It opens with a headline about keeping every note where you left it, lists three features (quick capture and search, notebooks, and sync across devices), and ends with a free signup line."
+          }
+        },
+        {
+          "event": "stop",
+          "payload": {
+            "conversation_id": "live-build",
+            "status": "completed"
+          }
+        }
+      ],
+      "expect": {
+        "followup_contains": ["Still the goal:", "add(a, b)", "Continue only that"],
+        "followup_forbids": ["no drift"],
+        "unit_contains": "add(a, b)",
+        "unit_forbids": "homepage",
+        "product": "[context-guard] Still the goal: add a function add(a, b) in examples/live_fixture/add.py that returns the sum of two numbers. Continue only that."
+      }
+    },
+    {
+      "id": "amend",
+      "chat": "You: Actually drop that. Design the homepage instead.",
+      "hook": {
+        "event": "beforeSubmitPrompt",
+        "payload": {
+          "conversation_id": "live-build",
+          "prompt": "Actually drop that. Design the homepage instead."
+        }
+      },
+      "expect": {
+        "unit_contains": "homepage",
+        "product": "Amend unit. Silence."
+      }
+    },
+    {
+      "id": "after_amend",
+      "chat": "Agent: Writing the homepage README.",
+      "hooks": [
+        {
+          "event": "afterAgentResponse",
+          "payload": {
+            "conversation_id": "live-build",
+            "text": "Writing the homepage README."
+          }
+        },
+        {
+          "event": "stop",
+          "payload": {
+            "conversation_id": "live-build",
+            "status": "completed"
+          }
+        }
+      ],
+      "expect": {
+        "stop": {},
+        "product": "Quiet stop after amend."
+      }
+    }
+  ],
+  "limits": {
+    "migration_sidetrack": "I wrote a database migration for the billing schema instead.",
+    "stayed_on_goal": "I did not write a marketing page. The open goal is still the add function in add.py.",
+    "mission_only_prompt": "Mission: look at the login bug"
+  }
+}

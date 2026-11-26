@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from context_rot_guard.models import CheckResult, GoalSpec, SessionDigest, Turn
+from context_guard.models import CheckResult, GoalSpec, SessionDigest, Turn
 
 _DONE_LINE = re.compile(
     r"\b(implemented|fixed|added|updated|passing|completed)\b",

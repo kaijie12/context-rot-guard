@@ -4,7 +4,7 @@ Copy into an Agent chat when you want a change in this repo. This file is a temp
 
 ---
 
-Change only what the task names in `context-rot-guard`. Do not add an embedding client, a UI, or a second test runner.
+Change only what the task names in `context-guard`. Do not add an embedding client, a UI, or a second test runner.
 
 **Closed loop (required):**
 

@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from context_rot_guard import ContextRotGuard, GoalSpec
+from context_guard import ContextRotGuard, GoalSpec
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,7 +37,7 @@ def test_cli_blocks_done_until_check_is_green(tmp_path: Path) -> None:
     base = [
         sys.executable,
         "-m",
-        "context_rot_guard",
+        "context_guard",
         "--session",
         str(session),
     ]

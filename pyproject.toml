@@ -3,27 +3,32 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "context-rot-guard"
+name = "context-guard"
 version = "0.1.0"
-description = "Compress long agent sessions, re-inject the original goal, and detect mechanical drift."
+description = "Keep the current unit of an agent chat in view, and redirect only when that unit is abandoned."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors = [{ name = "context-rot-guard" }]
+authors = [{ name = "context-guard" }]
 keywords = ["agents", "context", "harness", "llm"]
 dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+live = ["cursor-sdk>=1.5"]
 
 [project.scripts]
-context-rot-guard = "context_rot_guard.cli:main"
+context-guard = "context_guard.cli:main"
 
 [project.urls]
-Documentation = "https://github.com/local/context-rot-guard"
+Documentation = "https://github.com/local/context-guard"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["-m", "not live"]
+markers = [
+    "live: shells out to examples/run_stay_on_unit_live.py (Cursor SDK + API key)",
+]

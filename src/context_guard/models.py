@@ -42,6 +42,9 @@ class GuardConfig:
     side_quest_ratio: float = 0.6
     block_done_on_red: bool = True
     intent_ring_limit: int = 24
+    enable_compact: bool = True
+    # Speak a short pulse note every N pulses (hooks), and always on drift.
+    pulse_every: int = 3
 
     def __post_init__(self) -> None:
         self.compact_every = max(2, int(self.compact_every))
@@ -55,6 +58,8 @@ class GuardConfig:
         self.tool_char_limit = max(80, int(self.tool_char_limit))
         self.side_quest_ratio = float(self.side_quest_ratio)
         self.intent_ring_limit = max(self.mention_gap, int(self.intent_ring_limit))
+        self.enable_compact = bool(self.enable_compact)
+        self.pulse_every = max(1, int(self.pulse_every))
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

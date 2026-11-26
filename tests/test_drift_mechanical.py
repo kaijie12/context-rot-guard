@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from context_rot_guard import ContextRotGuard, EmbeddingDriftDetector, GoalSpec
+from context_guard import ContextRotGuard, EmbeddingDriftDetector, GoalSpec
 
 
 def _guard(goal: str = "Ship username validation", **kwargs: object) -> ContextRotGuard:

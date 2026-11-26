@@ -1,10 +1,10 @@
-"""context-rot-guard: compress, re-anchor, and detect drift in long agent sessions."""
+"""context-guard: compress, re-anchor, and detect drift in long agent sessions."""
 
 from __future__ import annotations
 
-from context_rot_guard.drift import EmbeddingDriftDetector, MechanicalDriftDetector
-from context_rot_guard.guard import ContextRotGuard
-from context_rot_guard.models import (
+from context_guard.drift import EmbeddingDriftDetector, MechanicalDriftDetector
+from context_guard.guard import ContextRotGuard
+from context_guard.models import (
     CheckResult,
     DriftReport,
     GoalSpec,

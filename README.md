@@ -1,150 +1,120 @@
-# context-rot-guard
+# context-guard
 
-Long agent chats rot: the model forgets the goal, burns tokens on tool noise, and declares victory while checks fail. **context-rot-guard** is a small Python library and CLI that wraps the message list with three layers:
+It keeps the current piece of work in front of the model, and only speaks up when the model drops that piece.
 
-1. **Compress** old turns into a structured `SessionDigest` (extractive — no LLM call).
-2. **Re-inject** the original goal and done-means as an authoritative anchor.
-3. **Detect drift** when a verify command stalls, recent turns stop overlapping the goal, edits leave the allowlist, or the model says done while the last check is red.
+Long chats forget the ask. Cursor already summarizes the window. This tool does not score “drift.” It remembers the **mission** and the **current goal**, restates them after each tool, and posts one short redirect if the assistant abandons the open goal.
 
-It does not run an agent, and it does not guarantee the task succeeds. It keeps the *conversation* pointed at the mission you recorded at the start.
+## Day to day (no Python)
 
-v1 decisions are in [`DECISIONS.md`](DECISIONS.md). The starting spec that produced this repo lives next to the prep notes as `ai-fde-prep/context-rot-guard-plan.md` (not in this package).
+Install the hooks once. Enable Cursor Hooks. Then chat.
 
-## Install and run
-
-Python 3.9+ (3.11+ is the spec’s preferred line; this tree stays on the 3.9 standard library so a stock macOS `python3` can run it). No runtime dependencies.
-
-```bash
-cd context-rot-guard
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e ".[dev]"
-
-python -m pytest -q
-python examples/demo_drift_session.py
-```
-
-`pip install -U pip` matters on older venvs (pip 21.x cannot editable-install a `pyproject.toml` project).
-
-The demo needs nothing but the stdlib. Pytest is the only dev dependency. A checkout without pytest can still run the demo:
-
-```bash
-python3 examples/demo_drift_session.py
-```
-
-You should see `before_messages` / `after_messages`, `goal_verbatim=true`, and a `DRIFT drift=true` line. `done_status=blocked` because the fake checks stay red.
-
-## CLI
-
-The PyPI *project* name `ctxrot` is already taken (a DSPy context tool). This package’s console script is `context-rot-guard`. The same commands work via `python3 -m context_rot_guard`.
-
-```bash
-context-rot-guard init \
-  --goal "Add max-length validation in src/username.js" \
-  --done-means "pytest -q exits 0" \
-  --constraint "do not edit tests" \
-  --check-cmd "pytest -q"
-
-context-rot-guard turn user "Add the length check."
-context-rot-guard turn assistant "Implemented validation in src/username.js."
-context-rot-guard check --exit-code 1 --log "FAILED tests/username.test.js"
-context-rot-guard messages --json
-context-rot-guard status
-context-rot-guard done    # exit 2 while the last check is red or drift is set
-```
-
-State is written to `.context-rot-guard/session.json` in the current directory. Pass `--session` to put it somewhere else. `revise --goal "..."` replaces the mission and clears fail counters; it keeps the raw turns.
-
-Library:
-
-```python
-from context_rot_guard import ContextRotGuard, GoalSpec
-
-guard = ContextRotGuard(
-    GoalSpec(
-        goal="Add max-length validation in src/username.js",
-        constraints=["do not edit tests"],
-        done_means="pytest -q exits 0",
-        check_cmd="pytest -q",
-    ),
-    compact_every=20,
-    anchor_every=5,
-    fail_streak=3,
-)
-guard.add_turn("user", "Add the length check.")
-guard.record_check(1, "FAILED")
-messages = guard.process()          # list to send to the model
-report = guard.attempt_done()       # {"status": "blocked", ...} while verify is red
-```
-
-`process()` always starts with a pin (the digest, once compaction has run). It appends an anchor every `anchor_every` turns, on drift, and when called with `before_completion=True`. Tool turns longer than 1200 characters are truncated, head and tail kept.
-
-Knobs (also CLI flags on `init`): `compact_every`, `anchor_every`, `fail_streak`, `token_ceiling`, `mention_gap`, `side_quest_ratio`. Token estimates are `len(text) // 4`.
-
-## What drift means
-
-| Signal | Fires when |
+| You say | What the tool does |
 | --- | --- |
-| `verify_stall` | The last `fail_streak` checks are all non-zero |
-| `goal_mention_gap` | The last `mention_gap` turns share no keyword with the goal, constraints, or done-means |
-| `side_quest` | At least three file paths show up in that window and ≥ 60% fall outside the allowlist (explicit `--allow-path` plus paths written in the goal) |
-| `completion_without_green` | A recent assistant turn says done/finished while the last check is non-zero |
+| `/goal …` or `Current goal: …`, plus `Check: …` | Arms the pin for that chat. No chat spam. |
+| `/show-goal` | Prints the living goal for this conversation (`goal show`). After recover, that is a re-entry briefing: Arc, Held now, Rejected / cancelled, Open. |
+| `Recover goal` | Scans this chat’s saved USER prompts (Composer bootstrap) and arms a briefing-shaped living goal for an older conversation. |
+| A later requirement | Adds it to Held. No scold. |
+| A question | Does not change the goal. An answer is not a sidetrack. |
+| `Actually drop that. …` | Drops that detail, or replaces the goal. Quiet. |
+| Check missing or red | One slim correction: the check is still open, then goal + Held only (not Arc / Rejected / Open). Stay on that goal. |
+| Same red output twice, or three reds | `Stop and replan. Goal still: …` (slim Held form). |
+| Check exits 0 | Silence. Stop runs the named `Check:` for that chat. |
+| Judge verdict `off_goal` | One line: `Still the goal: …`, including Held details. |
 
-The sensor reads a short **intent ring** (last 24 snippets), not the compacted window, so folding old turns into a digest does not erase a stall. Path A (embeddings) is `EmbeddingDriftDetector.score`, which raises `NotImplementedError`.
+Each conversation has its own store under `.context-guard/chats/<id>.json`. `/show-goal` without `--conversation` reads `default`; pass the chat id when you mean another thread.
 
-A green check resets the fail streak. `attempt_done()` stays `blocked` on drift, on a red check, or when nothing has been recorded. `--allow-done-on-red` at `init` lets a red check through only when drift is false.
+## How the brain decides (no score)
 
-## How this differs
+Context-guard keeps a living goal: the sentence you named, the check command, Held requirements, and (after recover) Arc / Rejected / Open. `context-guard goal show` prints the full briefing when those sections exist. The pin and stop loop stay slim: mission, goal, check, Held only. A question does not add a requirement. `Actually drop that` removes a detail or replaces the goal, and does not scold.
 
-| Idea | What it covers | What this adds |
+The loop does not read the chat for new rules. It reads the check:
+
+- No check recorded, or the last run is red: one correction, the check is still open, stay on that goal.
+- The same red output twice, or three reds: `Stop and replan. Goal still: …`
+- The check exits 0: silence.
+
+A reply is other work only when the judge returns `off_goal`. Then one line: `Still the goal: …`, including Held details. "Looks done" and model confidence are not checks. Pytest injects a scripted extractor and a scripted judge so the default suite stays offline.
+
+## How it works in real time
+
+The live feature is the exempt-invoice goal. Left = chat. Right = what context-guard does.
+
+| Step | Chat | context-guard |
 | --- | --- | --- |
-| Aider `/clear` | Human drops the chat; conventions via `--read` | Automatic compact that **keeps the goal verbatim**, plus a drift sensor |
-| Vendor thread compaction | Opaque summary of a long chat | Goal-anchored digest and check-command awareness |
-| Goose `retry.checks` | Done means a shell exit code | Rolling re-injection of the mission across many turns |
-| Cline `attempt_completion` | One-shot re-read of the task before done | Compression plus a fail streak, not a single prose check |
-| Cursor rules / hooks | Guides and sensors on **tools** | Portable middleware any loop can call |
-| Mem0-style memory | More stored context | Shrinks the window and pins the original mission |
-| LangChain trim/summarize | Generic history management | Couples the pin to verify stall |
-| PyPI `ctxrot` | DSPy context analytics | Not that package. Different project, no DSPy dependency |
+| 1 | Name the goal — exempt invoice, plus the check | Pin. `goal show` prints both. Silence. |
+| 2 | Build on-goal — fix `invoice.py`. Check passes | Silence |
+| 3 | Later detail — home-state reseller rule, marketplace never exempt | Both land on the goal. Silence. |
+| 4 | Question — anything else in the folder misleading about tax? | Goal unchanged. Silence. |
+| 5 | Judge verdict `off_goal` | One `Still the goal` line that includes those details |
 
-## Harness rails
+```mermaid
+flowchart TB
+  name[Name the goal and the check] --> show[goal show]
+  show --> work[Build on-goal]
+  work --> pass{Check passes}
+  pass -->|yes| quiet[Silence]
+  pass -->|no| open[Check is still open]
+  quiet --> detail[Later detail]
+  detail --> ask[Question]
+  ask --> same[Goal unchanged]
+  same --> off{Judge off_goal}
+  off -->|yes| still[Still the goal]
+  off -->|no| quiet
+```
 
-Developing *this* repo uses the Stage C / Stage D rails from the prep notes' `agent-sdlc/sample-harness-project`, retargeted at pytest.
+## What this is not
 
-| Rail | Role here |
-| --- | --- |
-| [`AGENTS.md`](AGENTS.md) | Check command, never-dos, human gates, 15-minute / 3-failure budget |
-| [`.cursor/rules/harness.mdc`](.cursor/rules/harness.mdc) | Always-on pointer at `AGENTS.md` |
-| [`deny-rules.json`](deny-rules.json) | Portable deny list |
-| [`.cursor/hooks/deny-read.js`](.cursor/hooks/deny-read.js) | Block `.env*` and `secrets/` |
-| [`.cursor/hooks/deny-shell.js`](.cursor/hooks/deny-shell.js) | Block force-push, prod mutate, `rm -rf /` |
-| [`.cursor/hooks/stop-check.sh`](.cursor/hooks/stop-check.sh) | On stop, run pytest. Exit 1 blocks stop when pytest failed. Exit 0 if pytest is not installed |
-| [`.claude/settings.example.json`](.claude/settings.example.json) | Same deny + stop shape for Claude Code |
-| [`sandbox.example.toml`](sandbox.example.toml) | Illustrative sandbox and budget |
-| [`TASK-PROMPT.example.md`](TASK-PROMPT.example.md) | Copy-paste closed-loop prompt |
+- Not a “no drift detected” status line.
+- Not a keyword or file-path score.
+- Not a skill you run every message.
+- Not a grade for a vague brainstorm with no check.
 
-Not brought over: the sample’s `src/username.js` red-test fixture (this package’s tests start green), `pnpm typecheck` as the stop oracle, and human gates for schema migrations or user-visible sends. Those do not apply to a library with no database and no outbound messaging. The product’s own “don’t say done while the check is red” rule is what `attempt_done()` enforces for sessions; `AGENTS.md` tells the coding agent not to bypass it.
+## For developers of this package
 
-## Non-goals (v1)
+Primary features: [`features/stay_on_unit.feature`](features/stay_on_unit.feature), [`features/recover_goal.feature`](features/recover_goal.feature).
 
-- IDE extension, Cursor skill package, or a dashboard
-- Real embedding drift
-- Multi-agent or multi-session orchestration
-- Driving Aider, Cline, Goose, or Cursor itself
+**How to run the living-goal feature (live model every time):**
 
-## Status of the v1 bar
+```bash
+.venv/bin/python examples/run_stay_on_unit_live.py
+```
 
-| Criterion | Where |
-| --- | --- |
-| Three layers in one run | `python3 examples/demo_drift_session.py` |
-| Goal verbatim after a long compact | `tests/test_compress.py` |
-| Fail streak sets `drift` with no embeddings | `tests/test_drift_mechanical.py` |
-| `process()` documented | This README. Breaking changes bump the major version |
-| Tests | `python3 -m pytest -q` |
-| Honest scope | This section and the comparison table |
-| Clone and run in a few minutes | Demo has zero dependencies |
+That starts one Composer 2.5 chat (Fast off) on the broken invoice, sends the two late tax rules, then asks a question. It does not order a sidetrack. `goal show` must list both rules. A passing check stays silent. The question must not post `Still the goal`. The log is [`examples/live-run-log.json`](examples/live-run-log.json). Needs `cursor-sdk`, Python ≥ 3.10, and `CURSOR_API_KEY` (env or one line in `~/.zshrc`).
 
-## License
+**Recover an older chat (live model):**
 
-MIT. See [`LICENSE`](LICENSE).
+```bash
+.venv/bin/python examples/run_recover_goal_live.py
+```
+
+Seeds prompts with no `Current goal:` / leading `/goal`, runs `Recover goal` through production `CursorModelBootstrap`, asserts `goal show`, then one on-goal agent turn. Log: [`examples/live-recover-log.json`](examples/live-recover-log.json).
+
+**Grade a recovered summary (live model, separate from the writer):**
+
+```bash
+.venv/bin/python examples/run_recover_grade_live.py
+```
+
+Prints three blocks: product `goal show` from Composer 2.5 (briefing shape), the rubric, then a Grok 4.7 grade (medium reasoning, Fast off, no tools). Exit 0 only when that grade passes. Live logs are gitignored. That command is the named check for this measurement. A red result is the stop loop. It does not open another plan.
+
+Optional aspirational bar (not the day-to-day path): [`examples/run_aaa_goal_summary.py`](examples/run_aaa_goal_summary.py) writes a Grok full-read briefing beside product recover; see [`examples/LAST_AAA_GOAL_SUMMARY.md`](examples/LAST_AAA_GOAL_SUMMARY.md).
+
+**Offline gate** (default; no model):
+
+```bash
+python3 -m pytest -q
+python3 examples/verify_live_story.py
+```
+
+`verify_live_story.py` replays [`examples/fixtures/live_chat.json`](examples/fixtures/live_chat.json) for the older fixture path, then checks this README still names the living-goal story. Optional: `pytest -m live` shells out to the live runner (excluded from default `pytest -q`).
+
+Optional CLI to name a goal without typing it in chat:
+
+```bash
+python3 -m context_guard goal start \
+  --mission "ship context-guard" \
+  --goal "wire prompt ingest" \
+  --done-means "the hook stores the user prompt"
+```
+
+Chat state: `.context-guard/chats/<id>.json`. Skills: [`.cursor/skills/context-guard`](.cursor/skills/context-guard/), [`.cursor/skills/show-goal`](.cursor/skills/show-goal/). Decisions: [`DECISIONS.md`](DECISIONS.md).
