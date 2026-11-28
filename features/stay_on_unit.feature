@@ -42,29 +42,26 @@ Feature: Living goal and the check loop
       Then goal show no longer lists the marketplace rule
       And context-guard posts no chat message
 
-  Rule: The loop is a check a program can fail
+  Rule: Without /goal-loop, on-track stops stay silent
 
     Scenario: No check has been recorded
       Given the open goal includes the exempt-invoice check
       And no check result is recorded
       When the assistant reply is still about that invoice goal
-      Then context-guard posts one correction that the check is still open
-      And the correction quotes the living goal
-      And the correction tells the model to stay on that goal
-      # "Looks done", model confidence, and "no exception" are not checks.
+      Then context-guard stays silent
+      # Optional Check is not the stop loop. Use /goal-loop for Open items.
 
     Scenario: The check is red once
       Given the open goal includes the exempt-invoice check
       And the check ran once and exited non-zero
       When the assistant reply is still about that invoice goal
-      Then context-guard posts one correction that quotes the failing result
-      And the correction tells the model to stay on that goal
+      Then context-guard stays silent
 
     Scenario: The same failure repeats
       Given the open goal includes the exempt-invoice check
       And the same failing check output has been recorded twice
       When the assistant reply is still about that invoice goal
-      Then context-guard posts "Stop and replan. Goal still:"
+      Then context-guard stays silent
       And the living goal is unchanged
 
     Scenario: The check passes
@@ -79,5 +76,16 @@ Feature: Living goal and the check loop
       Given the open goal lists the home-state rule and the marketplace rule
       When the judge verdict on the assistant reply is off_goal
       Then context-guard posts one "Still the goal" line
+      And that line includes the home-state rule and the marketplace rule
+      And the stored goal is unchanged
+
+    # Acceptance: examples/run_stay_on_unit_live.py (Composer 2.5, Fast off,
+    # CursorModelJudge). Offline pytest does not call the model for this scenario.
+    Scenario: A user steers the chat off the invoice and the live judge redirects
+      Given the open goal lists the home-state rule and the marketplace rule
+      When the user asks for a billing homepage blurb instead of the invoice fix
+      And a live model replies to that ask
+      Then the judge verdict is off_goal
+      And context-guard posts one "Still the goal" line
       And that line includes the home-state rule and the marketplace rule
       And the stored goal is unchanged

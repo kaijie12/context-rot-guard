@@ -221,7 +221,7 @@ def assert_story_match(fixture: dict) -> int:
         "Name the goal",
         "Later detail",
         "Question",
-        "Check passes",
+        "On-track",
         "Silence",
         "Still the goal",
         "exempt",

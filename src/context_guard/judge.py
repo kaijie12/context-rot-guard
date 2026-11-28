@@ -91,6 +91,79 @@ class CursorModelExtractor:
         return {"action": action, "detail": str(payload.get("detail") or "").strip()}
 
 
+class ScriptedPlanner:
+    """Test double for /goal-loop: continue, mark done, or request a plan."""
+
+    def __init__(
+        self,
+        *,
+        done_items: list[str] | None = None,
+        plan_required: bool = False,
+        plan: str = "",
+        fail: bool = False,
+    ) -> None:
+        self._done = list(done_items or [])
+        self._plan_required = plan_required
+        self._plan = plan
+        self._fail = fail
+        self.calls: list[dict[str, Any]] = []
+
+    def plan(
+        self,
+        *,
+        goal: str,
+        open_items: list[str],
+        assistant: str,
+        check_exit: int | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            {
+                "goal": goal,
+                "open_items": list(open_items),
+                "assistant": assistant,
+                "check_exit": check_exit,
+            }
+        )
+        if self._fail:
+            raise JudgeUnavailable("planner unavailable")
+        if self._plan_required:
+            return {"action": "needs_plan", "plan": self._plan, "done": []}
+        return {"action": "continue", "done": list(self._done), "plan": ""}
+
+
+class CursorModelPlanner:
+    """One Composer call over goal + Open. Pytest / missing key → unavailable."""
+
+    def plan(
+        self,
+        *,
+        goal: str,
+        open_items: list[str],
+        assistant: str,
+        check_exit: int | None = None,
+    ) -> dict[str, Any]:
+        del assistant, check_exit
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            raise JudgeUnavailable("planner unavailable under pytest")
+        if not (os.environ.get("CURSOR_API_KEY") or "").strip():
+            raise JudgeUnavailable("no CURSOR_API_KEY")
+        joined = "\n".join("- %s" % item for item in open_items) or "(none)"
+        prompt = _PLANNER_PROMPT.format(goal=goal, open_items=joined)
+        try:
+            payload = _call_model_object(prompt)
+        except JudgeUnavailable:
+            raise
+        action = str(payload.get("action") or "").strip()
+        if action not in {"continue", "needs_plan"}:
+            raise JudgeUnavailable("planner action %r" % action)
+        done = _bootstrap_string_list(payload.get("done"))
+        return {
+            "action": action,
+            "done": done,
+            "plan": str(payload.get("plan") or "").strip(),
+        }
+
+
 class ScriptedBootstrap:
     """Test double for recover: fixed goal, check, and briefing lists."""
 
@@ -354,6 +427,22 @@ Skip questions, restatements, tool chatter, and pasted [context-guard] blocks. D
 
 User messages (oldest first):
 {prompts}
+"""
+
+
+_PLANNER_PROMPT = """\
+You decide the next step for an optional goal-loop on a coding chat.
+Reply with JSON only, no markdown:
+{{"action":"continue"|"needs_plan","done":["finished open item…"],"plan":"short plan or empty"}}
+Do not edit files. Do not call tools.
+
+continue: keep working the remaining open items (or the goal if none are listed).
+needs_plan: the next chunk needs a new plan from the user; put that ask in plan.
+done: open items the assistant just finished; only list items that were open.
+
+Goal: {goal}
+Open items:
+{open_items}
 """
 
 

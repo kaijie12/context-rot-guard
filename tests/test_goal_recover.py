@@ -228,7 +228,7 @@ def test_fresh_goal_show_stays_flat_without_briefing_sections() -> None:
     assert "- %s" % HOME in shown
 
 
-def test_loop_note_stays_slim_when_briefing_sections_exist() -> None:
+def test_unarmed_followup_stays_silent_when_briefing_sections_exist() -> None:
     cycle = ChatCycle(
         "loop-slim",
         judge=ScriptedJudge("on_goal"),
@@ -244,11 +244,7 @@ def test_loop_note_stays_slim_when_briefing_sections_exist() -> None:
     _seed_prompts(cycle)
     assert cycle.recover_from_prompts()
     note = cycle.followup(ON_GOAL)
-    assert note is not None
-    assert "check is still open" in note.lower()
-    assert GOAL in note
-    assert HOME in note
-    assert "## Arc" not in note
-    assert "## Rejected" not in note
-    assert "## Open" not in note
-    assert "cancelled pulse" not in note
+    assert note is None
+    assert cycle.loop_armed is False
+    assert "## Arc" in cycle.show()
+    assert "cancelled pulse" in cycle.show()
