@@ -139,13 +139,13 @@ def test_hook_stop_speaks_when_no_check_was_named(tmp_path: Path) -> None:
         tmp_path,
         judge=judge,
     )
+    assert stop == {}
     note = stop.get("followup_message") or ""
-    assert "check is still open" in note.lower()
-    assert GOAL in note
+    assert "check is still open" not in note.lower()
     assert "Still the goal" not in note
 
 
-def test_hook_stop_runs_the_named_check_and_stays_silent_when_green(tmp_path: Path) -> None:
+def test_hook_stop_stays_silent_when_on_goal_without_goal_loop(tmp_path: Path) -> None:
     judge = ScriptedJudge("on_goal")
     handle_hook(
         "beforeSubmitPrompt",
@@ -167,7 +167,7 @@ def test_hook_stop_runs_the_named_check_and_stays_silent_when_green(tmp_path: Pa
     )
     assert stop == {}
     cycle = ChatCycle.load(chat_path(tmp_path, "auto-check"), "auto-check")
-    assert cycle.checks and int(cycle.checks[-1]["exit_code"]) == 0
+    assert cycle.loop_armed is False
 
 
 def test_hook_stop_redirects_once_on_off_goal(tmp_path: Path) -> None:

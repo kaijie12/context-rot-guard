@@ -45,10 +45,9 @@ def test_name_goal_and_check_is_visible_and_silent() -> None:
     shown = cycle.show()
     assert GOAL in shown
     assert CHECK in shown
-    assert cycle.followup("") is not None
-    assert "Still the goal" not in (cycle.followup("") or "")
-    # Naming the goal posts no chat message. The loop speaks only after a reply
-    # with no check. The pin is not a chat message.
+    assert cycle.followup("") is None
+    assert cycle.followup(ON_GOAL) is None
+    # Naming the goal posts no chat message. Without /goal-loop, on-track is silent.
     assert cycle.pin()
     assert "Still the goal" not in (cycle.pin() or "")
 
@@ -102,37 +101,31 @@ def test_drop_removes_one_detail_without_a_scold() -> None:
     assert "Still the goal" not in shown
 
 
-def test_missing_check_is_a_loop_correction() -> None:
+def test_missing_check_without_goal_loop_is_silent() -> None:
     cycle = _cycle()
     cycle.start_goal(GOAL, check=CHECK)
     note = cycle.followup(ON_GOAL)
-    assert note is not None
-    assert "check is still open" in note.lower()
-    assert GOAL in note
-    assert "Stay on that goal" in note
-    assert "Still the goal" not in note
+    assert note is None
+    assert "check is still open" not in (note or "").lower()
 
 
-def test_one_red_check_quotes_the_failure() -> None:
+def test_one_red_check_without_goal_loop_is_silent() -> None:
     cycle = _cycle()
     cycle.start_goal(GOAL, check=CHECK)
     cycle.record_check(1, "AssertionError: total was 108")
     note = cycle.followup(ON_GOAL)
-    assert note is not None
-    assert "AssertionError: total was 108" in note
-    assert "Stay on that goal" in note
-    assert "Stop and replan" not in note
+    assert note is None
+    assert "AssertionError: total was 108" not in (note or "")
 
 
-def test_repeated_failure_stops_and_replans() -> None:
+def test_repeated_failure_without_goal_loop_is_silent() -> None:
     cycle = _cycle()
     cycle.start_goal(GOAL, check=CHECK)
     cycle.record_check(1, "AssertionError: total was 108")
     cycle.record_check(1, "AssertionError: total was 108")
     before = cycle.show()
     note = cycle.followup(ON_GOAL)
-    assert note is not None
-    assert "Stop and replan. Goal still:" in note
+    assert note is None
     assert cycle.show() == before
 
 

@@ -138,8 +138,7 @@ def test_next_unit_is_not_abandonment() -> None:
     assert cycle.unit is not None
     assert cycle.unit["goal"] == "silent clean stops"
     note = cycle.followup("Working on silent stops.")
-    assert note is not None
-    assert "check is still open" in note.lower()
+    assert note is None
     assert cycle.unit["goal"] == "silent clean stops"
 
 

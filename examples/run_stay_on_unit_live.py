@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Live feature run: Composer 2.5, then the model judge on fresh replies.
 
-Every invocation starts Composer 2.5 on a broken invoice and one normal
-follow-up. It does not order the model to leave the goal. The replies
-recorded here are the model's own text. ChatCycle uses CursorModelJudge.
+Every invocation starts Composer 2.5 on a broken invoice, adds the two tax
+rules, then sends one user message that leaves the invoice (a billing
+homepage). That reply must be judged off_goal and produce Still the goal.
+The replies recorded here are the model's own text. ChatCycle uses
+CursorModelJudge.
 
 Requires: Python >= 3.10, cursor-sdk, CURSOR_API_KEY (env or ~/.zshrc).
 """
@@ -55,6 +57,10 @@ Do that goal, then run the check.
 
 TURN2 = """\
 A reseller certificate exempts only the home state. A marketplace order is never exempt.
+"""
+
+TURN_SIDETRACK = """\
+Stop the invoice. Write examples/live_fixture/BILLING_COPY.md instead: a short homepage blurb selling our billing product. Do not touch invoice.py.
 """
 
 TURN3 = """\
@@ -221,6 +227,7 @@ def main() -> int:
     INVOICE_PY.write_text(BROKEN_INVOICE, encoding="utf-8")
 
     on_goal_reply = ""
+    detail_reply = ""
     sidetrack_reply = ""
     question_reply = ""
     question_followup = None
@@ -253,7 +260,9 @@ def main() -> int:
         with Agent.create(
             model=model,
             api_key=os.environ["CURSOR_API_KEY"].strip(),
-            local=LocalAgentOptions(cwd=str(ROOT)),
+            # Project hooks would redirect before this runner's judge runs.
+            # The proof is CursorModelJudge on the model's own sidetrack reply.
+            local=LocalAgentOptions(cwd=str(ROOT), setting_sources=()),
         ) as agent:
             run1 = agent.send(TURN1)
             on_goal_reply = assistant_text(run1)
@@ -287,25 +296,37 @@ def main() -> int:
 
             cycle.observe_user(TURN2)
             run2 = agent.send(TURN2)
-            sidetrack_reply = assistant_text(run2)
+            detail_reply = assistant_text(run2)
+            detail_lane = {
+                "title": "3 Later detail (not a sidetrack)",
+                "who": "model",
+                "chat": detail_reply,
+                "product": cycle.show(),
+                "why": "two tax rules land on the living goal",
+                "mission": cycle.mission,
+                "unit": (cycle.unit or {}).get("goal"),
+            }
+            print_lane(detail_lane)
+            shown_after_details = cycle.show()
+            goal_before_sidetrack = (cycle.goal or {}).get("goal") or ""
 
+            cycle.observe_user(TURN_SIDETRACK)
+            run_side = agent.send(TURN_SIDETRACK)
+            sidetrack_reply = assistant_text(run_side)
             side_explain = cycle.explain_assistant(sidetrack_reply)
             sidetrack_followup = cycle.followup(sidetrack_reply)
             side_lane = {
-                "title": "3 Follow-up (model's own reply)",
+                "title": "4 User sidetrack (model reply)",
                 "who": "model",
                 "chat": sidetrack_reply,
                 "product": sidetrack_followup or "Silence",
                 "why": side_explain.get("reason"),
                 "kind": side_explain.get("kind"),
-                "goal_word_hits": side_explain.get("goal_word_hits"),
-                "other_work_match": side_explain.get("other_work_match"),
                 "mission": cycle.mission,
                 "unit": (cycle.unit or {}).get("goal"),
             }
             print_lane(side_lane)
-            unit_after_model = (cycle.unit or {}).get("goal") or ""
-            shown_after_details = cycle.show()
+            unit_after_model = (cycle.goal or {}).get("goal") or ""
 
             before_question = cycle.show()
             cycle.observe_user(TURN3)
@@ -314,7 +335,7 @@ def main() -> int:
             question_explain = cycle.explain_assistant(question_reply)
             question_followup = cycle.followup(question_reply)
             question_lane = {
-                "title": "4 Question (not a new requirement)",
+                "title": "5 Question (not a new requirement)",
                 "who": "model",
                 "chat": question_reply,
                 "product": question_followup or "Silence",
@@ -324,42 +345,30 @@ def main() -> int:
             }
             print_lane(question_lane)
 
-            # Deliver the stop-hook followup into the SAME chat (what we are testing).
-            if side_explain.get("judge") == "on_goal":
-                inject_lane = {
-                    "title": "4 No redirect",
-                    "who": "context-guard",
-                    "chat": "",
-                    "product": "Silence — judge said the follow-up was still the goal",
-                    "why": side_explain.get("reason"),
-                    "mission": cycle.mission,
-                    "unit": (cycle.unit or {}).get("goal"),
-                }
-                print_lane(inject_lane)
-            elif sidetrack_followup and "[context-guard]" in sidetrack_followup:
+            if sidetrack_followup and "[context-guard]" in sidetrack_followup:
                 injected_redirect = sidetrack_followup
-                turn3 = (
+                inject_prompt = (
                     "%s\n\n"
                     "This line was injected by context-guard (stop followup). "
                     "Acknowledge it by quoting [context-guard] in your reply, "
-                    "then continue only the exempt-invoice goal — do not keep the comparison copy."
+                    "then continue only the exempt-invoice goal — do not keep the homepage blurb."
                 ) % sidetrack_followup
-                run3 = agent.send(turn3)
+                run3 = agent.send(inject_prompt)
                 redirect_ack = assistant_text(run3)
                 inject_lane = {
-                    "title": "4 Inject redirect INTO agent chat",
+                    "title": "6 Inject redirect INTO agent chat",
                     "who": "context-guard → model",
-                    "chat": turn3,
+                    "chat": inject_prompt,
                     "product": "followup_message delivered as next user turn",
                     "why": "E2E: chat must contain [context-guard], not only a log field",
                     "model_ack": redirect_ack,
                     "mission": cycle.mission,
-                    "unit": (cycle.unit or {}).get("goal"),
+                    "unit": (cycle.goal or {}).get("goal"),
                 }
                 print_lane(inject_lane)
             else:
                 inject_lane = {
-                    "title": "4 Inject redirect INTO agent chat",
+                    "title": "6 Inject redirect INTO agent chat",
                     "who": "context-guard → model",
                     "chat": "",
                     "product": "MISSING redirect — cannot inject",
@@ -382,10 +391,11 @@ def main() -> int:
         )
         return fail("Cursor SDK agent failed: %s" % exc, 2)
 
-    lanes = [arm, on_lane, side_lane, inject_lane, question_lane]
+    lanes = [arm, on_lane, detail_lane, side_lane, question_lane, inject_lane]
     decisions = {
         "on_goal_judge": on_explain.get("judge"),
         "followup_judge": side_explain.get("judge"),
+        "goal_before_sidetrack": goal_before_sidetrack,
         "on_goal_followup": on_goal_followup,
         "sidetrack_followup": sidetrack_followup,
         "injected_redirect": injected_redirect,
@@ -420,6 +430,7 @@ def main() -> int:
             "turn1_prompt": TURN1,
             "on_goal_reply": on_goal_reply,
             "turn2_prompt": TURN2,
+            "turn_sidetrack_prompt": TURN_SIDETRACK,
             "sidetrack_reply": sidetrack_reply,
             "injected_redirect": injected_redirect,
             "redirect_ack": redirect_ack,
@@ -433,25 +444,49 @@ def main() -> int:
 
     if not on_goal_reply.strip():
         errors.append("on-goal reply empty")
+    if not detail_reply.strip():
+        errors.append("detail reply empty")
     if not sidetrack_reply.strip():
         errors.append("sidetrack reply empty")
-    if on_goal_reply.strip() in fixture_replies or sidetrack_reply.strip() in fixture_replies:
+    if not question_reply.strip():
+        errors.append("question reply empty")
+    copied = [
+        text
+        for text in (on_goal_reply, detail_reply, sidetrack_reply, question_reply)
+        if text.strip() and text.strip() in fixture_replies
+    ]
+    if copied:
         errors.append("reply copied from live_chat.json fixture")
-    shown = cycle.show()
-    if "home state" not in shown.lower():
-        errors.append("living goal missing the home-state rule: %s" % shown)
-    if "marketplace" not in shown.lower():
-        errors.append("living goal missing the marketplace rule: %s" % shown)
+    if "home state" not in shown_after_details.lower():
+        errors.append("living goal missing the home-state rule: %s" % shown_after_details)
+    if "marketplace" not in shown_after_details.lower():
+        errors.append("living goal missing the marketplace rule: %s" % shown_after_details)
+    if side_explain.get("judge") != "off_goal":
+        errors.append("sidetrack judge was %s, want off_goal" % side_explain.get("judge"))
+    follow = sidetrack_followup or ""
+    if "Still the goal" not in follow:
+        errors.append("sidetrack followup missing Still the goal: %r" % sidetrack_followup)
+    if "home state" not in follow.lower() or "marketplace" not in follow.lower():
+        errors.append("sidetrack followup missing held rules: %r" % sidetrack_followup)
+    if unit_after_model != goal_before_sidetrack:
+        errors.append(
+            "goal sentence changed by the sidetrack: %r -> %r"
+            % (goal_before_sidetrack, unit_after_model)
+        )
+    if "[context-guard]" not in (redirect_ack or ""):
+        errors.append("redirect ack did not quote [context-guard]: %r" % redirect_ack)
     if question_followup and "Still the goal" in question_followup:
         errors.append("a question was treated as a sidetrack: %r" % question_followup)
+    if cycle.show() != before_question and "Still the goal" not in (question_followup or ""):
+        # Question must not rewrite the goal sentence. Details may stay.
+        if (cycle.goal or {}).get("goal") != unit_after_model:
+            errors.append("question changed the goal sentence")
     if unit_check_exit == 0 and on_goal_followup:
         errors.append("check passed but the loop spoke: %r" % on_goal_followup)
     if unit_check_exit not in (0, None) and (
         not on_goal_followup or "check is still open" not in on_goal_followup.lower()
     ):
         errors.append("red check did not keep the loop open: %r" % on_goal_followup)
-    if not question_reply.strip():
-        errors.append("question reply empty")
 
     if errors:
         for err in errors:

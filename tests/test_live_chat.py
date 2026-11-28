@@ -67,10 +67,9 @@ def test_live_chat_story(tmp_path: Path) -> None:
                     assert expect["unit_forbids"] not in cycle.unit["goal"].lower()
                 elif expect.get("stop") == {}:
                     note = out.get("followup_message") or ""
-                    if note:
-                        assert "check is still open" in note.lower()
-                        assert "Still the goal" not in note
-                    else:
+                    assert "Still the goal" not in note
+                    assert "check is still open" not in note.lower()
+                    if not note:
                         assert out == {}
         if turn["id"] == "amend":
             cycle = ChatCycle.load(chat_path(tmp_path, cid), cid)

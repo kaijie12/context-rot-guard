@@ -1,23 +1,23 @@
 """Mission, current goal, pin, and gentle redirect.
 
 Investigate chats stay quiet. A mission or goal arms the pin. A follow-up is
-posted only when the judge says the assistant left the open goal, or the loop
-says escalate. New files are not off-track.
+posted when the judge says the assistant left the open goal, or when an
+optional /goal-loop is armed and Open items still need work.
 
 Judgment:
   1. User text sets mission / goal (observe_user) — the coding model does not.
   2. On stop, a model judge reads the goal and the assistant reply:
-       on_goal       — silence
+       on_goal       — silence (unless /goal-loop is armed)
        off_goal      — one Still the goal redirect
        unavailable   — silence, log judge=unavailable
   3. User “Actually drop that. …” amends the goal — not a redirect.
+  4. Optional /goal-loop pushes Open items until empty or a plan is needed.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +25,7 @@ from context_guard.judge import (
     CursorModelBootstrap,
     CursorModelExtractor,
     CursorModelJudge,
+    CursorModelPlanner,
     JudgeUnavailable,
 )
 
@@ -40,6 +41,9 @@ _USER_QUERY = re.compile(r"<user_query>\s*(.*?)\s*</user_query>", re.S)
 _CHECK_LINE = re.compile(r"(?im)^\s*check\s*:\s*(.+)$")
 _DROP = re.compile(r"(?i)actually drop that\.\s*(.+)")
 _RECOVER = re.compile(r"(?is)^\s*recover(?:\s+the)?\s+goal\s*[.!]?\s*$")
+_GOAL_LOOP_ON = re.compile(r"(?is)^\s*/goal-loop\s*$")
+_GOAL_LOOP_OFF = re.compile(r"(?is)^\s*/goal-loop\s+off\s*$")
+_OPEN_LINE = re.compile(r"(?im)^\s*open\s*:\s*(.+)$")
 _STOP = {
     "that",
     "this",
@@ -87,6 +91,7 @@ class ChatCycle:
         judge: Any = None,
         extractor: Any = None,
         bootstrap: Any = None,
+        planner: Any = None,
     ) -> None:
         self.conversation_id = conversation_id
         self.phase = "investigate"
@@ -97,9 +102,11 @@ class ChatCycle:
         self.events: list[dict[str, Any]] = []
         self.prompts: list[str] = []
         self.last_assistant = ""
+        self.loop_armed = False
         self.judge = judge if judge is not None else CursorModelJudge()
         self.extractor = extractor if extractor is not None else CursorModelExtractor()
         self.bootstrap = bootstrap if bootstrap is not None else CursorModelBootstrap()
+        self.planner = planner if planner is not None else CursorModelPlanner()
         self.user_turn = ""
 
     # Compat: older code/tests used .unit for the open goal object.
@@ -123,6 +130,7 @@ class ChatCycle:
             "events": self.events,
             "prompts": self.prompts,
             "last_assistant": self.last_assistant,
+            "loop_armed": self.loop_armed,
         }
 
     @classmethod
@@ -138,6 +146,7 @@ class ChatCycle:
         cycle.events = list(data.get("events") or [])
         cycle.prompts = list(data.get("prompts") or [])
         cycle.last_assistant = str(data.get("last_assistant") or "")
+        cycle.loop_armed = bool(data.get("loop_armed"))
         return cycle
 
     def save(self, path: Path) -> None:
@@ -169,6 +178,14 @@ class ChatCycle:
             self.user_turn = "recover"
             self.recover_from_prompts()
             return
+        if _GOAL_LOOP_OFF.match(raw):
+            self.loop_armed = False
+            self.events.append({"action": "loop_disarmed"})
+            return
+        if _GOAL_LOOP_ON.match(raw):
+            self.loop_armed = True
+            self.events.append({"action": "loop_armed"})
+            return
         slash = _SLASH_GOAL.match(raw)
         if slash:
             objective = slash.group(1).strip()
@@ -187,6 +204,16 @@ class ChatCycle:
             self.mission = raw
             self.phase = "goal" if self.goal else "mission"
             self.events.append({"action": "mission_set", "mission": raw})
+            return
+        open_line = _OPEN_LINE.match(raw)
+        if open_line and self.goal:
+            item = open_line.group(1).strip()
+            if item:
+                open_items = list(self.goal.get("open") or [])
+                if item not in open_items:
+                    open_items.append(item)
+                    self.goal["open"] = open_items
+                    self.events.append({"action": "open_added", "item": item})
             return
         if self.goal:
             self._apply_extraction(raw)
@@ -554,16 +581,10 @@ class ChatCycle:
             out["judge"] = "off_goal"
             out["kind"] = "model_sidetrack"
         elif verdict == "on_goal":
-            if self.verdict() == "escalate":
-                out["action"] = "escalate"
-                out["reason"] = "repeated failing checks"
-                out["judge"] = "on_goal"
-                out["kind"] = "loop_escalate"
-            else:
-                out["action"] = "silence"
-                out["reason"] = reason
-                out["judge"] = "on_goal"
-                out["kind"] = "on_goal"
+            out["action"] = "silence"
+            out["reason"] = reason
+            out["judge"] = "on_goal"
+            out["kind"] = "on_goal"
         else:
             out["action"] = "silence"
             out["reason"] = "judge unavailable"
@@ -588,28 +609,56 @@ class ChatCycle:
             note = "[context-guard] Still the goal: %s. Continue only that." % shown
             explained["followup"] = note
             return note
-        note = self._loop_note()
+        note = self._loop_note(assistant or self.last_assistant)
         if note:
             explained["followup"] = note
             self.events.append({"action": "loop", "goal": self.goal["goal"], "note": note})
         return note
 
-    def _loop_note(self) -> str | None:
-        """Check result only. Confidence and a quiet exception are not a pass."""
-        if not self.goal:
+    def _loop_note(self, assistant: str = "") -> str | None:
+        """Optional /goal-loop: push Open items, or ask for a plan. Not the shell Check."""
+        if not self.goal or not self.loop_armed:
             return None
-        if self.verdict() == "pass":
+        # Arming `/goal-loop` posts nothing; wait for a real assistant turn.
+        if not (assistant or "").strip():
             return None
-        if self.verdict() == "escalate":
-            return "[context-guard] Stop and replan. Goal still: %s." % self._held_show()
-        parts = ["[context-guard] The check is still open."]
+        open_items = list(self.goal.get("open") or [])
+        check_exit: int | None = None
         if self.checks:
-            last = self.checks[-1]
-            output = str(last.get("output") or "").strip()
-            parts.append(output or "exit %s" % last.get("exit_code"))
-        parts.append(self._held_show())
-        parts.append("Stay on that goal.")
-        return " ".join(parts)
+            check_exit = int(self.checks[-1].get("exit_code"))
+        try:
+            planned = self.planner.plan(
+                goal=str(self.goal["goal"]),
+                open_items=open_items,
+                assistant=assistant,
+                check_exit=check_exit,
+            )
+        except JudgeUnavailable:
+            return None
+        action = str((planned or {}).get("action") or "")
+        done = [str(item).strip() for item in (planned or {}).get("done") or [] if str(item).strip()]
+        if done:
+            remaining = []
+            for item in open_items:
+                if any(item == finished or finished in item or item in finished for finished in done):
+                    continue
+                remaining.append(item)
+            self.goal["open"] = remaining
+            open_items = remaining
+            self.events.append({"action": "open_done", "done": list(done), "open": list(open_items)})
+        if action == "needs_plan":
+            self.loop_armed = False
+            plan = str((planned or {}).get("plan") or "").strip()
+            if plan:
+                return "[context-guard] This chunk needs a plan: %s" % plan
+            return "[context-guard] This chunk needs a plan."
+        if action != "continue":
+            return None
+        if not open_items and done:
+            self.loop_armed = False
+            return None
+        listing = "; ".join(open_items) if open_items else str(self.goal["goal"])
+        return "[context-guard] Still open: %s" % listing
 
 
 def _normalize_goal(goal: Any) -> dict[str, Any] | None:
@@ -807,30 +856,6 @@ def _exit_code_from_tool_output(output: str) -> int | None:
     return None
 
 
-def _run_named_check(cycle: ChatCycle, root: Path) -> None:
-    """Run the living goal's Check on stop. No Check named means the loop stays open."""
-    if not cycle.goal:
-        return
-    command = str(cycle.goal.get("check") or "").strip()
-    if not command:
-        return
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(root),
-            text=True,
-            capture_output=True,
-            timeout=420,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        cycle.record_check(1, str(exc))
-        return
-    output = ((result.stdout or "") + (result.stderr or "")).strip()
-    cycle.record_check(result.returncode, output)
-
-
 def handle_hook(
     event: str,
     payload: dict[str, Any],
@@ -838,6 +863,7 @@ def handle_hook(
     judge: Any = None,
     extractor: Any = None,
     bootstrap: Any = None,
+    planner: Any = None,
 ) -> dict[str, Any]:
     """Cursor hook adapter. Returns the JSON object the hook should print."""
     conversation_id = str(payload.get("conversation_id") or payload.get("session_id") or "default")
@@ -849,6 +875,8 @@ def handle_hook(
         cycle.extractor = extractor
     if bootstrap is not None:
         cycle.bootstrap = bootstrap
+    if planner is not None:
+        cycle.planner = planner
     event = event or str(payload.get("hook_event_name") or "")
     transcript = payload.get("transcript_path")
     if isinstance(transcript, str):
@@ -886,7 +914,7 @@ def handle_hook(
     if event == "stop":
         if str(payload.get("status") or "") not in {"", "completed"}:
             return {}
-        _run_named_check(cycle, root)
+        # Named Check is optional documentation / live runners — not the stop loop.
         note = cycle.followup(cycle.last_assistant)
         cycle.save(path)
         if not note:
